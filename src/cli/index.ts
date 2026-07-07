@@ -10,6 +10,7 @@ import { runDoctor } from "../core/doctor.js";
 import { renderOverview, vaultOverview } from "../core/overview.js";
 import { createProject, listProjects, setProjectStatus } from "../core/projects.js";
 import { initVault } from "../core/scaffold.js";
+import { defaultClaudeSkillsDir, installSkills } from "../core/skills.js";
 import { addTask, completeTask, listTasks } from "../core/tasks.js";
 import type { TaskItem } from "../core/types.js";
 import { Vault } from "../core/vault.js";
@@ -360,6 +361,24 @@ program
       }
       const errors = findings.filter((f) => f.severity === "error").length;
       process.exitCode = errors > 0 ? 1 : 0;
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+program
+  .command("install-skills")
+  .description("install the brain/capture/weekly skills into Claude Code (~/.claude/skills)")
+  .option("--dir <dir>", "target skills directory", defaultClaudeSkillsDir())
+  .option("--force", "overwrite skills that already exist")
+  .action((opts: { dir: string; force?: boolean }) => {
+    try {
+      const result = installSkills(opts.dir, { force: opts.force });
+      console.log(pc.green(`Skills → ${result.targetDir}`));
+      for (const s of result.installed) console.log(`  ${pc.green("+")} /${s}`);
+      for (const s of result.skipped)
+        console.log(pc.dim(`  = /${s} (kept existing; --force to replace)`));
+      console.log(pc.dim("\nRestart Claude Code (or start a new session) to pick them up."));
     } catch (err) {
       fail(err);
     }

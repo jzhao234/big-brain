@@ -21,6 +21,12 @@ export {
 } from "./projects.js";
 export { initVault, templateDir, type InitOptions, type InitResult } from "./scaffold.js";
 export {
+  defaultClaudeSkillsDir,
+  installSkills,
+  skillsDir,
+  type InstallSkillsResult,
+} from "./skills.js";
+export {
   addTask,
   compareTasks,
   completeTask,

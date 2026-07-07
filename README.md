@@ -112,6 +112,23 @@ big-brain mcp                   run the MCP server
 
 Every list command takes `--json` for scripting.
 
+## Skills (Claude Code)
+
+big-brain ships three [Claude Code skills](https://docs.claude.com/en/docs/claude-code) that wrap the tools into slash-commands:
+
+- **`/brain`** — orient (load the overview) and switch into brain-aware mode for the session
+- **`/capture`** — zero-friction capture to the inbox
+- **`/weekly`** — a guided weekly review (triage inbox, prune projects, reschedule tasks)
+
+Install them into `~/.claude/skills/` on any machine:
+
+```bash
+big-brain install-skills          # add /brain, /capture, /weekly (skips existing)
+big-brain install-skills --force  # overwrite existing versions
+```
+
+They're path-agnostic — they call the `big-brain` CLI / MCP tools and resolve the vault from `BIG_BRAIN_VAULT` (or `--vault`), so the same skill works on every machine. Restart Claude Code to pick them up.
+
 ## Design principles
 
 1. **Files over databases.** Markdown you can read in 30 years beats any app.
