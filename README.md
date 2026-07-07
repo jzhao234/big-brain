@@ -9,6 +9,7 @@ Your AI tools each keep their own memory of you, siloed and invisible. big-brain
 - **CLI** for humans: `big-brain status`, `big-brain capture`, `big-brain tasks`.
 - **Projects as the unit of work** — each is one file with a goal, checkbox tasks, and a running log.
 - **Deterministic retrieval**: full-text search (fuzzy, title-boosted), `[[wikilink]]` graph with backlinks, tags, frontmatter queries. No embeddings, no API keys, works offline.
+- **Optional git auto-commit**: flip `git.autoCommit` (and `autoPush`) in config and every write — from any tool, any LLM — is committed (and pushed) automatically, so saves never sit uncommitted and other devices stay in sync. Best-effort: a git failure never blocks a save. See [docs/vault-spec.md](docs/vault-spec.md#auto-commit).
 
 ## Quickstart
 

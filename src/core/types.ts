@@ -128,6 +128,19 @@ export interface BrainConfig {
   ignore: string[];
   /** Days without modification before an active project is flagged stale. */
   staleProjectDays: number;
+  /** Auto-commit (and optionally push) after every write, so saves never sit uncommitted. */
+  git: GitConfig;
+}
+
+export interface GitConfig {
+  /** Commit the vault after each write via the tool (default false). Best-effort — a git failure never blocks the save. */
+  autoCommit: boolean;
+  /** Also `git push` after each auto-commit (default false). Requires a configured upstream; failures are non-fatal. */
+  autoPush: boolean;
+  /** Commit author name; falls back to the repo/global git identity when empty. */
+  authorName?: string;
+  /** Commit author email; set both to avoid unattributed commits on shared boxes. */
+  authorEmail?: string;
 }
 
 export interface DoctorFinding {

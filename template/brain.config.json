@@ -1,4 +1,10 @@
 {
   "name": "{{name}}",
-  "staleProjectDays": 21
+  "staleProjectDays": 21,
+  "git": {
+    "autoCommit": false,
+    "autoPush": false,
+    "authorName": "",
+    "authorEmail": ""
+  }
 }

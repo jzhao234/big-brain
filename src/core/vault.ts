@@ -3,6 +3,7 @@ import path from "node:path";
 import fg from "fast-glob";
 import matter from "gray-matter";
 import { folderTypeMap, loadConfig } from "./config.js";
+import { autoCommit } from "./git.js";
 import { parseNote } from "./parse.js";
 import { SearchIndex } from "./search.js";
 import type { BrainConfig, Note, NoteLink, SearchOptions, SearchResult } from "./types.js";
@@ -186,6 +187,7 @@ export class Vault {
     this.refresh();
     const note = this.notesByPath.get(rel);
     if (!note) throw new Error(`Failed to read back created note: ${rel}`);
+    this.commit(`big-brain: create ${note.path}`);
     return note;
   }
 
@@ -225,6 +227,7 @@ export class Vault {
     }
     fs.writeFileSync(note.absPath, raw.endsWith("\n") ? raw : `${raw}\n`, "utf8");
     this.refresh();
+    this.commit(`big-brain: append ${note.path}`);
     return this.notesByPath.get(note.path)!;
   }
 
@@ -239,6 +242,7 @@ export class Vault {
     }
     fs.writeFileSync(note.absPath, matter.stringify(note.body, fm), "utf8");
     this.refresh();
+    this.commit(`big-brain: update frontmatter ${note.path}`);
     return this.notesByPath.get(note.path)!;
   }
 
@@ -252,6 +256,7 @@ export class Vault {
       "utf8",
     );
     this.refresh();
+    this.commit(`big-brain: rewrite ${note.path}`);
     return this.notesByPath.get(note.path)!;
   }
 
@@ -268,7 +273,17 @@ export class Vault {
     }
     fs.renameSync(note.absPath, destAbs);
     this.refresh();
+    this.commit(`big-brain: archive ${note.path}`);
     return this.notesByPath.get(toPosix(destRel))!;
+  }
+
+  /**
+   * Commit (and optionally push) the vault, if auto-commit is enabled in config.
+   * Best-effort: never throws, so a git problem can't break a save. Public so
+   * write paths outside this class (e.g. task completion) can trigger it too.
+   */
+  commit(message: string): void {
+    autoCommit(this.dir, message, this.config.git);
   }
 
   /** Read a template file's content, if it exists. */

@@ -1,6 +1,7 @@
 export { CONFIG_FILENAME, DEFAULT_CONFIG, loadConfig, resolveVault } from "./config.js";
 export { getDailyNote, logToDaily, renderTemplate } from "./daily.js";
 export { runDoctor } from "./doctor.js";
+export { autoCommit } from "./git.js";
 export { renderOverview, vaultOverview, type VaultOverview } from "./overview.js";
 export {
   extractHeadings,
@@ -32,6 +33,7 @@ export {
 export type {
   BrainConfig,
   DoctorFinding,
+  GitConfig,
   Heading,
   Note,
   NoteLink,

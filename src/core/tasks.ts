@@ -124,5 +124,6 @@ export function completeTask(vault: Vault, idOrText: string): CompleteResult {
   lines[task.line] = `${line.replace(/\[([ /\-])\]/, "[x]")} ✅ ${todayISO()}`;
   fs.writeFileSync(abs, lines.join("\n"), "utf8");
   vault.refresh();
+  vault.commit(`big-brain: complete task in ${task.file}`);
   return { task: { ...task, done: true, completedOn: todayISO() }, file: task.file };
 }
