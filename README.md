@@ -51,6 +51,8 @@ claude mcp add --scope user big-brain -- npx -y big-brain-mcp --vault ~/brain
 
 **ChatGPT and others** — any client that speaks MCP over stdio works the same way. For clients without MCP, the CLI's `--json` output makes the vault scriptable.
 
+**Browser (claude.ai / ChatGPT)** — cloud AIs can't launch a local stdio server. The zero-infra option is to connect them to your vault's **GitHub repo** and let them read/write the markdown directly (no computed overview/search/task tools). See [docs/browser-github-connector.md](docs/browser-github-connector.md) and paste [prompts/browser-github-instructions.md](prompts/browser-github-instructions.md).
+
 Then teach the assistant how to use it: the vault's `CLAUDE.md` covers Claude Code automatically; paste [`prompts/agent-instructions.md`](prompts/agent-instructions.md) into other tools' custom instructions.
 
 ## Seed it from your existing AI history
