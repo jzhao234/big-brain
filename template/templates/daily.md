@@ -1,0 +1,7 @@
+## Focus
+
+## Log
+
+## Tasks
+
+## Notes

@@ -1,0 +1,63 @@
+{
+  "name": "big-brain",
+  "version": "0.1.0",
+  "description": "A plain-markdown second brain for humans and LLMs — Obsidian-compatible vault, MCP server, and CLI for notes, projects, and tasks that work with any AI assistant.",
+  "keywords": [
+    "second-brain",
+    "mcp",
+    "model-context-protocol",
+    "obsidian",
+    "notes",
+    "knowledge-base",
+    "pkm",
+    "llm",
+    "claude",
+    "tasks"
+  ],
+  "license": "MIT",
+  "author": "Junhao Zhao",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jzhao234/big-brain.git"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "big-brain": "dist/cli/index.js",
+    "big-brain-mcp": "dist/mcp/index.js"
+  },
+  "main": "dist/core/index.js",
+  "files": [
+    "dist",
+    "template",
+    "prompts",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "biome check src tests",
+    "lint:fix": "biome check --write src tests",
+    "prepare": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "commander": "^13.1.0",
+    "fast-glob": "^3.3.3",
+    "gray-matter": "^4.0.3",
+    "minisearch": "^7.1.2",
+    "picocolors": "^1.1.1",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.1.0"
+  }
+}
