@@ -17,8 +17,9 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-      # --omit=optional also proves the codebase works without the embeddings dep
-      - run: npm ci --ignore-scripts --omit=optional
+      # Full install: rollup (vitest) needs its own platform-specific optional dep,
+      # so --omit=optional would break the test runner itself.
+      - run: npm ci --ignore-scripts
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
@@ -29,3 +30,17 @@ jobs:
           cd /tmp/smoke-vault
           node "$GITHUB_WORKSPACE/dist/cli/index.js" status
           node "$GITHUB_WORKSPACE/dist/cli/index.js" doctor || true
+
+  # Proves the codebase compiles and builds without the optional embeddings
+  # dependency (@huggingface/transformers) — the graceful-degradation contract.
+  no-optional-deps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts --omit=optional
+      - run: npm run typecheck
+      - run: npm run build

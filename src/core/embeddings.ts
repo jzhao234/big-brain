@@ -66,7 +66,11 @@ export async function createEmbeddingProvider(
   if (cachedProvider && cachedProvider.id === config.model) return cachedProvider;
   let transformers: TransformersModule;
   try {
-    transformers = (await import("@huggingface/transformers")) as unknown as TransformersModule;
+    // Non-literal specifier: the package is an optionalDependency, so module
+    // resolution must happen at runtime only — a literal import() would fail
+    // `tsc` when installed with --omit=optional (as CI does).
+    const moduleName = "@huggingface/transformers";
+    transformers = (await import(moduleName)) as unknown as TransformersModule;
   } catch {
     throw new Error(
       "embeddings.enabled is true but @huggingface/transformers is not installed. " +

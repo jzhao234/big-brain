@@ -82,6 +82,7 @@ The whole point is that you never re-feed context. The assistant **loads** a sma
 | Find notes about X | *"search my brain for X"* | `big-brain search X` |
 | Read one note | *"read the Auth project"* | `big-brain show "Auth"` |
 | See tasks / projects | *"what's due?"* | `big-brain tasks`, `big-brain projects` |
+| Pull surrounding context | *"what's related to X?"* | `big-brain related X` |
 
 **Save** — as decisions, progress, and ideas happen (append-first; never destructive):
 
@@ -93,7 +94,7 @@ The whole point is that you never re-feed context. The assistant **loads** a sma
 | Finish a task | *"mark that done"* | `big-brain task done <id>` |
 | Start a project | *"new project: …"* | `big-brain project new "…"` |
 
-**Review** — `/weekly` runs a guided pass: triage the inbox, prune projects, reschedule overdue tasks, fix broken links.
+**Review** — `/weekly` runs a guided pass: triage the inbox, prune projects, reschedule overdue tasks, fix broken links, and **consolidate** — `big-brain doctor` flags bloated notes and near-duplicates, and the review proposes splits/merges/stale-fact pruning for your approval. Capture and search keep a brain useful; consolidation keeps it trustworthy.
 
 ## Skills (Claude Code)
 
