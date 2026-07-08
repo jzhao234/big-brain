@@ -130,7 +130,17 @@ On a fresh machine: install big-brain (above), `git clone` your vault, `big-brai
 
 ## Seed it from your existing AI history
 
-Your LLMs already know a lot about you. [`prompts/seed-interview.md`](prompts/seed-interview.md) is a structured interview prompt — run it in ChatGPT, Claude, Gemini, wherever you have history; drop each output into `inbox/`; then ask a vault-connected assistant to run the `process-inbox` prompt to merge it all into real notes, projects, and tasks.
+An empty brain is useless; the fastest way to a useful one is extracting what your LLMs **already know about you**. Every assistant you've used heavily — ChatGPT, Claude, Gemini — has months of context about your projects, preferences, and goals sitting in its memory and chat history. Seeding pulls that out, once, into files you own.
+
+**1. Run the seed interview in each LLM you use.** Copy the prompt from [`prompts/seed-interview.md`](prompts/seed-interview.md) into each assistant — ideally the account with the most history, with memory/personalization enabled. It's a structured export interview: profile, current projects, stack, how you like to work with AI, goals, people, routines, standing constraints, open loops, and blind spots. It instructs the model to be concrete, mark inferences `(inferred)`, and write "No data" instead of inventing — so the output is honest enough to build on.
+
+**2. Save each output into the vault's `inbox/`** as one file per model (`inbox/seed-chatgpt.md`, `inbox/seed-claude.md`, …). Don't organize anything yet — capture first is the whole inbox philosophy.
+
+**3. Triage.** Ask a vault-connected assistant to run the **`process-inbox`** MCP prompt (or just say *"triage my inbox"* / run `/weekly` in Claude Code). It merges duplicates across models — different LLMs know different slices of you, and they mostly complement rather than conflict — then turns the material into real structure: projects with tasks for everything in flight, `people/` notes, a preferences note your agent instructions can point at, reference notes for your stack/setup, and open loops as tasks. You confirm per item; raw exports can be kept in `archive/` for provenance.
+
+**4. Repeat occasionally.** Models keep accumulating context about you — re-running the interview every few months and triaging the diff keeps the vault ahead of any one provider's memory.
+
+Two more seeding paths worth knowing: if you already keep an **Obsidian vault**, big-brain can adopt it in place (add a `brain.config.json`, map your folder names via the `folders` config — see [docs/vault-spec.md](docs/vault-spec.md)); and a **work session with a vault-connected agent seeds as a side effect** — the agent instructions tell it to create projects and capture facts as you work, so the brain fills in from real activity even if you skip the interview.
 
 ## The vault
 
