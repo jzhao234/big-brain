@@ -1,7 +1,19 @@
 export { CONFIG_FILENAME, DEFAULT_CONFIG, loadConfig, resolveVault } from "./config.js";
 export { getDailyNote, logToDaily, renderTemplate } from "./daily.js";
 export { runDoctor } from "./doctor.js";
+export {
+  INDEX_DIR,
+  INDEX_FILE,
+  SemanticIndex,
+  chunkNote,
+  createEmbeddingProvider,
+  hybridSearch,
+  rrfFuse,
+  type EmbeddingProvider,
+  type HybridDeps,
+} from "./embeddings.js";
 export { autoCommit } from "./git.js";
+export { relatedNotes, type RelatedNote, type RelatedOptions } from "./related.js";
 export { renderOverview, vaultOverview, type VaultOverview } from "./overview.js";
 export {
   extractHeadings,
@@ -39,6 +51,7 @@ export {
 export type {
   BrainConfig,
   DoctorFinding,
+  EmbeddingsConfig,
   GitConfig,
   Heading,
   Note,

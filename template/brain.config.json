@@ -6,5 +6,9 @@
     "autoPush": false,
     "authorName": "",
     "authorEmail": ""
+  },
+  "embeddings": {
+    "enabled": false,
+    "model": "Xenova/all-MiniLM-L6-v2"
   }
 }

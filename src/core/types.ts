@@ -130,6 +130,15 @@ export interface BrainConfig {
   staleProjectDays: number;
   /** Auto-commit (and optionally push) after every write, so saves never sit uncommitted. */
   git: GitConfig;
+  /** Optional local semantic-embedding layer for hybrid search (off by default). */
+  embeddings: EmbeddingsConfig;
+}
+
+export interface EmbeddingsConfig {
+  /** Enable local embeddings + hybrid (lexical ⊕ semantic) search. Default false. */
+  enabled: boolean;
+  /** transformers.js model id; must be usable for feature-extraction. */
+  model: string;
 }
 
 export interface GitConfig {

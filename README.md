@@ -5,11 +5,12 @@
 Your AI tools each keep their own memory of you, siloed and invisible. big-brain inverts that: **one knowledge vault you own, that every assistant reads and writes.** Claude Code, Claude Desktop, ChatGPT, Cursor — they all see the same projects, the same tasks, the same notes. Switch models freely; your context comes with you.
 
 - **Plain markdown files.** No database, no lock-in. Open the vault in Obsidian, grep it, put it in git.
-- **MCP server** with 21 tools: search, capture, daily logs, project and task management, link graph, vault health.
+- **MCP server** with 22 tools: search, capture, daily logs, project and task management, link graph, related notes, vault health.
 - **CLI** for humans: `big-brain status`, `big-brain capture`, `big-brain tasks`.
 - **Claude Code skills** — `/brain`, `/capture`, `/weekly` — installed with one command.
 - **Projects as the unit of work** — each is one file with a goal, checkbox tasks, and a running log.
-- **Deterministic retrieval**: full-text search (fuzzy, title-boosted), `[[wikilink]]` graph with backlinks, tags, frontmatter queries. No embeddings, no API keys, works offline.
+- **Deterministic retrieval first**: full-text search (fuzzy, title-boosted), `[[wikilink]]` graph with backlinks, tags, frontmatter queries. No API keys, works offline.
+- **Optional local hybrid search**: flip `embeddings.enabled` and a small on-device model (via `@huggingface/transformers`) adds semantic matching, fused with full-text by Reciprocal Rank Fusion — paraphrases match, exact identifiers still win, and nothing leaves your machine. Powers `related_notes` similarity too. See [docs/vault-spec.md](docs/vault-spec.md#search--embeddings-hybrid-retrieval).
 - **Optional git auto-commit + push** — flip a config flag and every write, from any tool, is committed and pushed automatically, so saves never sit uncommitted and your other machines stay in sync. Best-effort: a git failure never blocks a save.
 
 Requires Node 20+.
@@ -164,7 +165,8 @@ Notes are markdown + YAML frontmatter (`type`, `tags`, `status`, `due`…). Task
 | `list_projects` / `create_project` / `set_project_status` | Project lifecycle |
 | `list_tasks` / `add_task` / `complete_task` | Checkbox tasks across the vault |
 | `note_links` | Outgoing links + backlinks for a note |
-| `list_tags` / `vault_health` | Tag census; broken links, stale projects, overdue tasks |
+| `related_notes` | Related notes with reasons: links, co-citations, rare shared tags, title mentions, semantic similarity |
+| `list_tags` / `vault_health` | Tag census; broken links, stale projects, bloated/duplicate notes, overdue tasks |
 
 Plus three MCP prompts: `orient`, `weekly-review`, `process-inbox`.
 
@@ -173,11 +175,12 @@ Plus three MCP prompts: `orient`, `weekly-review`, `process-inbox`.
 ```
 big-brain init [dir]            scaffold a vault        big-brain tasks [--project X]
 big-brain status                overview                big-brain task add|done ...
-big-brain search <query>        full-text search        big-brain projects [--status active]
+big-brain search <query>        search (hybrid if on)   big-brain projects [--status active]
 big-brain show <note>           print a note            big-brain project new|status ...
 big-brain new <title>           create a note           big-brain links <note>
-big-brain capture <text>        quick capture           big-brain tags
-big-brain daily [--log "..."]   daily note / journal    big-brain doctor
+big-brain related <note>        related notes + why     big-brain tags
+big-brain capture <text>        quick capture           big-brain doctor
+big-brain daily [--log "..."]   daily note / journal    big-brain index [--status|--rebuild]
 big-brain install-skills        add Claude Code skills  big-brain mcp   run the MCP server
 ```
 
@@ -187,7 +190,7 @@ Every list command takes `--json` for scripting.
 
 1. **Files over databases.** Markdown you can read in 30 years beats any app.
 2. **The human owns the vault; agents are guests.** Agents append and capture freely, but rewriting and archiving are deliberate acts.
-3. **Deterministic beats clever.** Search + links + tags retrieves reliably and works offline; you can add embeddings on top, but you shouldn't need them to find your own notes.
+3. **Deterministic beats clever.** Search + links + tags retrieves reliably and works offline; the semantic layer is opt-in, fully local, and *fused with* — never a replacement for — exact search.
 4. **Model-agnostic by construction.** Everything goes through MCP or the filesystem — nothing assumes a particular AI vendor.
 
 ## Development

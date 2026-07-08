@@ -2,8 +2,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getDailyNote, logToDaily } from "../core/daily.js";
 import { runDoctor } from "../core/doctor.js";
+import { hybridSearch } from "../core/embeddings.js";
 import { renderOverview, vaultOverview } from "../core/overview.js";
 import { createProject, listProjects, setProjectStatus } from "../core/projects.js";
+import { relatedNotes } from "../core/related.js";
 import { addTask, completeTask, listTasks } from "../core/tasks.js";
 import type { Note } from "../core/types.js";
 import { nowStamp, todayISO } from "../core/util.js";
@@ -59,7 +61,7 @@ function taskRow(t: {
  * another agent) are always visible.
  */
 export function buildServer(vault: Vault): McpServer {
-  const server = new McpServer({ name: "big-brain", version: "0.1.0" });
+  const server = new McpServer({ name: "big-brain", version: "0.2.0" });
   const fresh = <T>(fn: () => T): T => {
     vault.refresh();
     return fn();
@@ -81,7 +83,7 @@ export function buildServer(vault: Vault): McpServer {
     {
       title: "Search notes",
       description:
-        "Full-text search across the vault (titles boosted, fuzzy + prefix matching). Filter by type (note/project/daily/person/reference/area), tag, folder prefix, or frontmatter status.",
+        "Search the vault: full-text (titles boosted, fuzzy + prefix matching), fused with local semantic search when the vault has embeddings enabled. Filter by type (note/project/daily/person/reference/area), tag, folder prefix, or frontmatter status.",
       inputSchema: {
         query: z.string().describe("Search terms"),
         type: z.string().optional().describe("Restrict to a note type, e.g. 'project'"),
@@ -91,14 +93,30 @@ export function buildServer(vault: Vault): McpServer {
         limit: z.number().int().min(1).max(50).optional().describe("Max results (default 20)"),
       },
     },
-    async (args) =>
-      fresh(() =>
-        json(
-          vault
-            .search(args.query, args)
-            .map((r) => ({ path: r.path, title: r.title, type: r.type, excerpt: r.excerpt })),
-        ),
-      ),
+    async (args) => {
+      vault.refresh();
+      const results = await hybridSearch(vault, args.query, args);
+      return json(
+        results.map((r) => ({ path: r.path, title: r.title, type: r.type, excerpt: r.excerpt })),
+      );
+    },
+  );
+
+  server.registerTool(
+    "related_notes",
+    {
+      title: "Related notes",
+      description:
+        "Find notes related to a given note, with reasons: direct links, shared link-neighbors, shared (rarity-weighted) tags, unlinked title mentions, and semantic similarity when embeddings are enabled. Use to pull surrounding context before working on a topic, or to find where a new note should link.",
+      inputSchema: {
+        ref: z.string().describe("Note path, title, or alias"),
+        limit: z.number().int().min(1).max(25).optional().describe("Max results (default 8)"),
+      },
+    },
+    async ({ ref, limit }) => {
+      vault.refresh();
+      return json(await relatedNotes(vault, ref, { limit }));
+    },
   );
 
   server.registerTool(

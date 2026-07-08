@@ -20,6 +20,7 @@ export const DEFAULT_CONFIG: BrainConfig = {
   ignore: [],
   staleProjectDays: 21,
   git: { autoCommit: false, autoPush: false },
+  embeddings: { enabled: false, model: "Xenova/all-MiniLM-L6-v2" },
 };
 
 export function loadConfig(vaultDir: string): BrainConfig {
@@ -32,6 +33,7 @@ export function loadConfig(vaultDir: string): BrainConfig {
     folders: { ...DEFAULT_CONFIG.folders, ...(raw.folders ?? {}) },
     ignore: raw.ignore ?? [],
     git: { ...DEFAULT_CONFIG.git, ...(raw.git ?? {}) },
+    embeddings: { ...DEFAULT_CONFIG.embeddings, ...(raw.embeddings ?? {}) },
   };
 }
 

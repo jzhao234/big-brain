@@ -7,8 +7,10 @@ import pc from "picocolors";
 import { resolveVault } from "../core/config.js";
 import { getDailyNote, logToDaily } from "../core/daily.js";
 import { runDoctor } from "../core/doctor.js";
+import { SemanticIndex, createEmbeddingProvider, hybridSearch } from "../core/embeddings.js";
 import { renderOverview, vaultOverview } from "../core/overview.js";
 import { createProject, listProjects, setProjectStatus } from "../core/projects.js";
+import { relatedNotes } from "../core/related.js";
 import { initVault } from "../core/scaffold.js";
 import { defaultClaudeSkillsDir, installSkills } from "../core/skills.js";
 import { addTask, completeTask, listTasks } from "../core/tasks.js";
@@ -20,7 +22,7 @@ const program = new Command();
 program
   .name("big-brain")
   .description("A plain-markdown second brain for humans and LLMs")
-  .version("0.1.0")
+  .version("0.2.0")
   .option(
     "--vault <dir>",
     "vault directory (default: $BIG_BRAIN_VAULT or nearest brain.config.json)",
@@ -81,23 +83,92 @@ program
   .option("-f, --folder <folder>", "folder prefix filter")
   .option("-s, --status <status>", "frontmatter status filter")
   .option("-n, --limit <n>", "max results", "20")
+  .option("--lexical", "full-text only (skip semantic fusion even if enabled)")
   .option("--json", "JSON output")
-  .action((words: string[], opts: Record<string, string | boolean>) => {
+  .action(async (words: string[], opts: Record<string, string | boolean>) => {
     try {
       const vault = openVault();
-      const results = vault.search(words.join(" "), {
+      const searchOpts = {
         type: opts.type as string | undefined,
         tag: opts.tag as string | undefined,
         folder: opts.folder as string | undefined,
         status: opts.status as string | undefined,
         limit: Number(opts.limit),
-      });
+      };
+      const query = words.join(" ");
+      const results = opts.lexical
+        ? vault.search(query, searchOpts)
+        : await hybridSearch(vault, query, searchOpts);
       if (opts.json) return console.log(JSON.stringify(results, null, 2));
       if (results.length === 0) return console.log(pc.dim("No matches."));
       for (const r of results) {
-        console.log(`${pc.bold(r.title)} ${pc.dim(`(${r.type}) ${r.path}`)}`);
+        const sem = r.matches.includes("semantic") ? pc.cyan(" ~") : "";
+        console.log(`${pc.bold(r.title)}${sem} ${pc.dim(`(${r.type}) ${r.path}`)}`);
         if (r.excerpt) console.log(`  ${pc.dim(r.excerpt.slice(0, 120))}`);
       }
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+program
+  .command("related <ref...>")
+  .description("notes related to a note (links, shared tags, mentions, semantic)")
+  .option("-n, --limit <n>", "max results", "8")
+  .option("--json", "JSON output")
+  .action(async (refWords: string[], opts: { limit: string; json?: boolean }) => {
+    try {
+      const vault = openVault();
+      const results = await relatedNotes(vault, refWords.join(" "), {
+        limit: Number(opts.limit),
+      });
+      if (opts.json) return console.log(JSON.stringify(results, null, 2));
+      if (results.length === 0) return console.log(pc.dim("No related notes found."));
+      for (const r of results) {
+        console.log(`${pc.bold(r.title)} ${pc.dim(`(${r.type}) ${r.path}`)}`);
+        console.log(`  ${pc.dim(r.reasons.join(" · "))}`);
+      }
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+program
+  .command("index")
+  .description("build/refresh the local semantic index (requires embeddings.enabled)")
+  .option("--rebuild", "discard and re-embed everything")
+  .option("--status", "show index status only")
+  .action(async (opts: { rebuild?: boolean; status?: boolean }) => {
+    try {
+      const vault = openVault();
+      if (!vault.config.embeddings.enabled) {
+        return console.log(
+          pc.yellow(
+            'Embeddings are off. Enable with "embeddings": { "enabled": true } in brain.config.json.',
+          ),
+        );
+      }
+      const provider = await createEmbeddingProvider(vault.config.embeddings);
+      if (opts.rebuild) {
+        const { INDEX_DIR, INDEX_FILE } = await import("../core/embeddings.js");
+        const { rmSync } = await import("node:fs");
+        rmSync(path.join(vault.dir, INDEX_DIR, INDEX_FILE), { force: true });
+      }
+      const index = new SemanticIndex(vault.dir, provider.id);
+      if (opts.status) {
+        const s = index.status();
+        const stale = index.stale(vault.notes(true)).length;
+        return console.log(
+          `model ${s.model} · ${s.notes} notes · ${s.chunks} chunks · ${(s.sizeBytes / 1024).toFixed(0)}KB · ${stale} stale`,
+        );
+      }
+      const embedded = await index.ensure(vault.notes(true), provider);
+      const s = index.status();
+      console.log(
+        pc.green(
+          `Indexed ${embedded} changed note${embedded === 1 ? "" : "s"} (${s.notes} total, ${s.chunks} chunks, ${(s.sizeBytes / 1024).toFixed(0)}KB).`,
+        ),
+      );
     } catch (err) {
       fail(err);
     }

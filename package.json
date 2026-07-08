@@ -1,6 +1,6 @@
 {
   "name": "big-brain",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A plain-markdown second brain for humans and LLMs — Obsidian-compatible vault, MCP server, and CLI for notes, projects, and tasks that work with any AI assistant.",
   "keywords": [
     "second-brain",
@@ -54,6 +54,9 @@
     "minisearch": "^7.1.2",
     "picocolors": "^1.1.1",
     "zod": "^3.24.0"
+  },
+  "optionalDependencies": {
+    "@huggingface/transformers": "^3.3.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",

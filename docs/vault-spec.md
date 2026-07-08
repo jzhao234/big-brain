@@ -39,6 +39,21 @@ A note's `type` comes from frontmatter when present, otherwise from its top-leve
 
 All keys optional. `folders` only needs the entries you rename. `ignore` takes extra glob patterns to exclude from scanning. `node_modules`, `.git`, `.obsidian`, `.trash`, and the templates folder are always excluded.
 
+### Search & embeddings (hybrid retrieval)
+
+Search is lexical by default (MiniSearch full-text: fuzzy, prefix, title-boosted) and needs no setup. Setting `embeddings.enabled: true` adds a **fully local semantic layer**: a small embedding model runs on-device via `@huggingface/transformers` (an optional dependency; the model — default `Xenova/all-MiniLM-L6-v2`, ~23MB — downloads once to `~/.cache/big-brain/models`). Queries then fuse the lexical and semantic rankings with Reciprocal Rank Fusion, so paraphrases match ("buying property" finds the house-hacking note) while exact identifiers keep working. No API keys; no note content leaves the machine.
+
+The index lives at `.bigbrain/embeddings.json` inside the vault — **derived and rebuildable**, so it's gitignored (each machine builds its own; the starter `.gitignore` covers it). Notes are chunked on `##` boundaries (~1200 chars) and re-embedded incrementally when their content hash changes; this happens automatically during search, or explicitly:
+
+```
+big-brain index             # embed new/changed notes
+big-brain index --status    # model, note/chunk counts, staleness
+big-brain index --rebuild   # discard and re-embed everything
+big-brain search "..." --lexical   # bypass the semantic layer for one query
+```
+
+Semantic similarity also powers part of `related_notes` / `big-brain related` — the rest of that tool (links, co-citations, rarity-weighted shared tags, unlinked title mentions) is fully deterministic and works with embeddings off.
+
 ### Auto-commit
 
 With `git.autoCommit: true`, every write through the tool (any MCP tool, the CLI, from any LLM) runs `git add -A` + `git commit` afterward, so saves never sit uncommitted. Set `git.autoPush: true` to also `git push` after each commit and keep other devices in sync. `authorName`/`authorEmail` set the commit identity — set both on shared boxes to avoid commits attributed to a system user; leave them empty to use the repo/global git identity.

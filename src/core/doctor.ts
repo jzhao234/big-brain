@@ -101,6 +101,54 @@ export function runDoctor(vault: Vault): DoctorFinding[] {
     }
   }
 
+  // Bloated notes: consolidation candidates for splitting (daily notes exempt —
+  // they're logs and are allowed to grow).
+  for (const note of active) {
+    if (note.type === "daily") continue;
+    const lines = note.body.split("\n").length;
+    if (note.body.length > 8000 || lines > 250) {
+      findings.push({
+        severity: "info",
+        rule: "bloated-note",
+        message: `${Math.round(note.body.length / 1000)}KB / ${lines} lines — consider splitting sections into linked notes`,
+        path: note.path,
+      });
+    }
+  }
+
+  // Possible duplicates: high body-token overlap between two active notes.
+  const tokenSets = active
+    .filter((n) => n.type !== "daily" && n.body.length > 200)
+    .map((n) => ({ path: n.path, tokens: bodyTokens(n.body) }));
+  if (tokenSets.length <= 200) {
+    for (let i = 0; i < tokenSets.length; i++) {
+      for (let j = i + 1; j < tokenSets.length; j++) {
+        const sim = jaccard(tokenSets[i]!.tokens, tokenSets[j]!.tokens);
+        if (sim >= 0.5) {
+          findings.push({
+            severity: "info",
+            rule: "possible-duplicate",
+            message: `${Math.round(sim * 100)}% content overlap with ${tokenSets[j]!.path} — merge or differentiate`,
+            path: tokenSets[i]!.path,
+          });
+        }
+      }
+    }
+  }
+
   const order = { error: 0, warning: 1, info: 2 };
   return findings.sort((a, b) => order[a.severity] - order[b.severity]);
+}
+
+/** Distinct informative words of a note body, for cheap duplicate detection. */
+function bodyTokens(body: string): Set<string> {
+  const words = body.toLowerCase().match(/[a-z][a-z0-9-]{3,}/g) ?? [];
+  return new Set(words);
+}
+
+function jaccard(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  let inter = 0;
+  for (const w of a) if (b.has(w)) inter++;
+  return inter / (a.size + b.size - inter);
 }

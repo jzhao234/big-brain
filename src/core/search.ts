@@ -1,6 +1,18 @@
 import MiniSearch from "minisearch";
 import type { Note, SearchOptions, SearchResult } from "./types.js";
 
+/** Shared filter semantics for lexical and semantic search paths. */
+export function noteMatchesFilters(note: Note, opts: SearchOptions): boolean {
+  const tag = opts.tag?.replace(/^#/, "").toLowerCase();
+  const folder = opts.folder ? opts.folder.replace(/\/+$/, "") : undefined;
+  if (!opts.includeArchived && note.archived) return false;
+  if (opts.type && note.type !== opts.type) return false;
+  if (tag && !note.tags.includes(tag)) return false;
+  if (folder && !note.path.startsWith(`${folder}/`)) return false;
+  if (opts.status && String(note.frontmatter.status ?? "") !== opts.status) return false;
+  return true;
+}
+
 interface Doc {
   id: string;
   title: string;
@@ -57,18 +69,10 @@ export class SearchIndex {
 
   search(query: string, notes: Map<string, Note>, opts: SearchOptions = {}): SearchResult[] {
     const limit = opts.limit ?? 20;
-    const tag = opts.tag?.replace(/^#/, "").toLowerCase();
-    const folder = opts.folder ? opts.folder.replace(/\/+$/, "") : undefined;
 
     const filter = (result: { id: string }): boolean => {
       const note = notes.get(result.id);
-      if (!note) return false;
-      if (!opts.includeArchived && note.archived) return false;
-      if (opts.type && note.type !== opts.type) return false;
-      if (tag && !note.tags.includes(tag)) return false;
-      if (folder && !note.path.startsWith(`${folder}/`)) return false;
-      if (opts.status && String(note.frontmatter.status ?? "") !== opts.status) return false;
-      return true;
+      return note !== undefined && noteMatchesFilters(note, opts);
     };
 
     const hits = this.mini.search(query, { filter });
