@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { autoCommit } from "../src/core/git.js";
 import { initVault } from "../src/core/scaffold.js";
 import { addTask, completeTask } from "../src/core/tasks.js";
 import { Vault } from "../src/core/vault.js";
@@ -35,6 +36,29 @@ function writeConfig(autoCommit: boolean): void {
   );
 }
 
+function enableAutoCommit(): void {
+  writeConfig(true);
+  git(["add", "brain.config.json"]);
+  git([
+    "-c",
+    "user.name=Seed",
+    "-c",
+    "user.email=s@example.com",
+    "commit",
+    "-q",
+    "-m",
+    "enable auto-commit",
+  ]);
+}
+
+function committedPaths(): string[] {
+  return git(["show", "--format=", "--name-only", "--no-renames", "HEAD"])
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .sort();
+}
+
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "bb-git-"));
   initVault(dir, { name: "Git Test" });
@@ -49,7 +73,7 @@ afterEach(() => {
 
 describe("auto-commit", () => {
   it("commits after each write when enabled", () => {
-    writeConfig(true);
+    enableAutoCommit();
     const vault = new Vault(dir);
     const before = commitCount();
 
@@ -67,8 +91,79 @@ describe("auto-commit", () => {
     expect(git(["log", "-1", "--pretty=%an"]).trim()).toBe("Test");
   });
 
+  it("commits only touched paths and preserves unrelated staged and unstaged work", () => {
+    enableAutoCommit();
+    fs.appendFileSync(path.join(dir, "BRAIN.md"), "\nmanual tracked edit\n");
+    git(["add", "BRAIN.md"]);
+    fs.writeFileSync(path.join(dir, "notes", "Manual.md"), "manual untracked note\n");
+    const vault = new Vault(dir);
+
+    vault.createNote({ title: "Tool Write", body: "created by the tool" });
+
+    expect(committedPaths()).toEqual(["notes/Tool Write.md"]);
+    const status = git(["status", "--porcelain"]);
+    expect(status).toContain("M  BRAIN.md");
+    expect(status).toContain("?? notes/Manual.md");
+  });
+
+  it("commits both sides of an archive move without sweeping unrelated work", () => {
+    enableAutoCommit();
+    const vault = new Vault(dir);
+    vault.createNote({ title: "Archive Me", body: "keep this" });
+    fs.appendFileSync(path.join(dir, "BRAIN.md"), "\nmanual edit\n");
+
+    vault.archiveNote("Archive Me");
+
+    expect(committedPaths()).toEqual(["archive/notes/Archive Me.md", "notes/Archive Me.md"]);
+    expect(git(["status", "--porcelain"])).toContain(" M BRAIN.md");
+  });
+
+  it("treats touched filenames as literal git pathspecs", () => {
+    const literal = path.join(dir, "notes", "[literal].md");
+    const patternMatch = path.join(dir, "notes", "l.md");
+    fs.writeFileSync(literal, "literal note\n");
+    fs.writeFileSync(patternMatch, "other note\n");
+    git(["add", "notes/[literal].md", "notes/l.md"]);
+    git([
+      "-c",
+      "user.name=Seed",
+      "-c",
+      "user.email=s@example.com",
+      "commit",
+      "-q",
+      "-m",
+      "seed unusual filenames",
+    ]);
+    enableAutoCommit();
+    fs.appendFileSync(patternMatch, "unrelated edit\n");
+    const vault = new Vault(dir);
+
+    vault.appendToNote("notes/[literal].md", "tool edit");
+
+    expect(committedPaths()).toEqual(["notes/[literal].md"]);
+    expect(git(["status", "--porcelain"])).toContain(" M notes/l.md");
+  });
+
+  it("does not commit anything when callers omit touched paths", () => {
+    enableAutoCommit();
+    fs.appendFileSync(path.join(dir, "BRAIN.md"), "\nmanual edit\n");
+    const before = commitCount();
+
+    expect(() =>
+      autoCommit(dir, "should not commit", {
+        autoCommit: true,
+        autoPush: false,
+        authorName: "Test",
+        authorEmail: "t@example.com",
+      }),
+    ).not.toThrow();
+
+    expect(commitCount()).toBe(before);
+    expect(git(["status", "--porcelain"])).toContain(" M BRAIN.md");
+  });
+
   it("commits on task completion (a direct-write path)", () => {
-    writeConfig(true);
+    enableAutoCommit();
     const vault = new Vault(dir);
     vault.createNote({ title: "Proj", type: "project", body: "## Tasks" });
     addTask(vault, { text: "do the thing", note: "Proj" });

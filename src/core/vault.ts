@@ -189,7 +189,7 @@ export class Vault {
       if (!created) throw new Error(`Failed to read back created note: ${rel}`);
       return created;
     });
-    this.commit(`big-brain: create ${note.path}`);
+    this.commit(`big-brain: create ${note.path}`, [note.path]);
     return note;
   }
 
@@ -210,7 +210,7 @@ export class Vault {
       if (!reloaded) throw new Error(`Failed to read back updated note: ${notePath}`);
       return reloaded;
     });
-    this.commit(`big-brain: ${operation} ${updated.path}`);
+    this.commit(`big-brain: ${operation} ${updated.path}`, [updated.path]);
     return updated;
   }
 
@@ -297,7 +297,7 @@ export class Vault {
         return result;
       }),
     );
-    this.commit(`big-brain: archive ${note.path}`);
+    this.commit(`big-brain: archive ${note.path}`, [sourcePath, archived.path]);
     return archived;
   }
 
@@ -306,8 +306,8 @@ export class Vault {
    * Best-effort: never throws, so a git problem can't break a save. Public so
    * write paths outside this class (e.g. task completion) can trigger it too.
    */
-  commit(message: string): void {
-    autoCommit(this.dir, message, this.config.git);
+  commit(message: string, touchedPaths: string[]): void {
+    autoCommit(this.dir, message, this.config.git, touchedPaths);
   }
 
   /** Read a template file's content, if it exists. */

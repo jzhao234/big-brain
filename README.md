@@ -11,7 +11,7 @@ Your AI tools each keep their own memory of you, siloed and invisible. big-brain
 - **Projects as the unit of work** — each is one file with a goal, checkbox tasks, and a running log.
 - **Deterministic retrieval first**: full-text search (fuzzy, title-boosted), `[[wikilink]]` graph with backlinks, tags, frontmatter queries. No API keys, works offline.
 - **Optional local hybrid search**: flip `embeddings.enabled` and a small on-device model (via `@huggingface/transformers`) adds semantic matching, fused with full-text by Reciprocal Rank Fusion — paraphrases match, exact identifiers still win, and nothing leaves your machine. Powers `related_notes` similarity too. See [docs/vault-spec.md](docs/vault-spec.md#search--embeddings-hybrid-retrieval).
-- **Optional git auto-commit + push** — flip a config flag and every write, from any tool, is committed and pushed automatically, so saves never sit uncommitted and your other machines stay in sync. Best-effort: a git failure never blocks a save.
+- **Optional git auto-commit + push** — flip a config flag and every write, from any tool, commits only the note paths it touched and pushes automatically, so saves never sit uncommitted, unrelated work is not swept in, and your other machines stay in sync. Best-effort: a git failure never blocks a save.
 
 Requires Node 20+.
 

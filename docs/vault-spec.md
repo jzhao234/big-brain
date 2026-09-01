@@ -56,7 +56,7 @@ Semantic similarity also powers part of `related_notes` / `big-brain related` �
 
 ### Auto-commit
 
-With `git.autoCommit: true`, every write through the tool (any MCP tool, the CLI, from any LLM) runs `git add -A` + `git commit` afterward, so saves never sit uncommitted. Set `git.autoPush: true` to also `git push` after each commit and keep other devices in sync. `authorName`/`authorEmail` set the commit identity — set both on shared boxes to avoid commits attributed to a system user; leave them empty to use the repo/global git identity.
+With `git.autoCommit: true`, every write through the tool (any MCP tool, the CLI, from any LLM) stages and commits only the note paths touched by that operation, so saves never sit uncommitted without sweeping in unrelated staged, unstaged, or untracked work. Existing edits within a touched note are included because git cannot separate ownership at the hunk level. Set `git.autoPush: true` to also `git push` after each commit and keep other devices in sync. `authorName`/`authorEmail` set the commit identity — set both on shared boxes to avoid commits attributed to a system user; leave them empty to use the repo/global git identity.
 
 It is **best-effort**: the file is written first, so if the vault isn't a git repo, has nothing to stage, or git errors (offline, no upstream, rejected push), the save still succeeds — a one-line warning goes to stderr and nothing is lost. Commits are per write, giving a fine-grained history (every capture, log line, and status change is its own commit); a push that fails stays committed locally and syncs on the next successful push. Requires `git` on `PATH`.
 
