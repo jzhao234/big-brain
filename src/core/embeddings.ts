@@ -16,7 +16,7 @@ import type { Vault } from "./vault.js";
  * - Deterministic-first: lexical search keeps working with embeddings off;
  *   hybrid fuses the two rankings with Reciprocal Rank Fusion.
  * - Model-agnostic & local: the default provider runs a small model fully
- *   on-device via @huggingface/transformers (an optionalDependency); no API
+ *   on-device via the opt-in @huggingface/transformers add-on; no API
  *   keys, no note content leaves the machine.
  */
 
@@ -41,13 +41,8 @@ const RRF_K = 60;
 let cachedProvider: EmbeddingProvider | undefined;
 
 /**
- * Create the local transformers.js provider (cached per process). Throws a
- * actionable error if the optional dependency isn't installed.
- */
-/**
  * Structural view of the bits of @huggingface/transformers we use, so the
- * codebase typechecks even when the optional dependency isn't installed
- * (CI runs with --omit=optional).
+ * codebase typechecks when the opt-in add-on isn't installed.
  */
 interface TransformersModule {
   env: { cacheDir?: string };
@@ -60,21 +55,24 @@ interface TransformersModule {
   >;
 }
 
+/** Create the cached local provider, or explain how to install the add-on. */
 export async function createEmbeddingProvider(
   config: EmbeddingsConfig,
 ): Promise<EmbeddingProvider> {
   if (cachedProvider && cachedProvider.id === config.model) return cachedProvider;
   let transformers: TransformersModule;
   try {
-    // Non-literal specifier: the package is an optionalDependency, so module
+    // Non-literal specifier: this is an opt-in runtime add-on, so module
     // resolution must happen at runtime only — a literal import() would fail
-    // `tsc` when installed with --omit=optional (as CI does).
+    // `tsc` in the default installation.
     const moduleName = "@huggingface/transformers";
     transformers = (await import(moduleName)) as unknown as TransformersModule;
   } catch {
     throw new Error(
       "embeddings.enabled is true but @huggingface/transformers is not installed. " +
-        "Reinstall big-brain with optional dependencies (plain `npm install`), or set embeddings.enabled to false.",
+        "Install it alongside big-brain (for a source checkout: " +
+        "`npm install --no-save --package-lock=false @huggingface/transformers@^3.8.1`), " +
+        "or set embeddings.enabled to false.",
     );
   }
   // Stable model cache that survives reinstalls of big-brain itself.

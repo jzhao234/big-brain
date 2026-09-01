@@ -29,6 +29,14 @@ npm link          # puts `big-brain` and `big-brain-mcp` on your PATH
 
 `npm link` skips `-g` install quirks and lets you `git pull && npm run build` to update later. (Once published, this becomes `npm i -g big-brain`.)
 
+The default install keeps semantic-search native dependencies out of the base package. To enable local embeddings, install the opt-in runtime add-on alongside big-brain, then set `embeddings.enabled` to `true` in `brain.config.json`:
+
+```bash
+npm install --no-save --package-lock=false @huggingface/transformers@^3.8.1
+```
+
+For a future global npm install, install both packages into the same global prefix: `npm i -g big-brain @huggingface/transformers@^3.8.1`.
+
 ## Quickstart
 
 ```bash

@@ -17,8 +17,8 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-      # Full install: rollup (vitest) needs its own platform-specific optional dep,
-      # so --omit=optional would break the test runner itself.
+      # The default install includes platform helpers used by the test runner,
+      # but excludes the opt-in Transformers add-on and its native dependency tree.
       - run: npm ci --ignore-scripts
       - run: npm run typecheck
       - run: npm run lint
@@ -31,9 +31,9 @@ jobs:
           node "$GITHUB_WORKSPACE/dist/cli/index.js" status
           node "$GITHUB_WORKSPACE/dist/cli/index.js" doctor || true
 
-  # Proves the codebase compiles and builds without the optional embeddings
-  # dependency (@huggingface/transformers) — the graceful-degradation contract.
-  no-optional-deps:
+  # Proves the published default: embeddings stay opt-in while the package
+  # still typechecks and builds without Transformers installed.
+  base-install:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,6 +41,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci --ignore-scripts --omit=optional
+      - run: npm ci --ignore-scripts
+      - name: Verify embeddings dependency is not installed by default
+        run: test ! -d node_modules/@huggingface/transformers
       - run: npm run typecheck
       - run: npm run build
