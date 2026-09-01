@@ -1,5 +1,3 @@
-import fs from "node:fs";
-import path from "node:path";
 import { getDailyNote } from "./daily.js";
 import type { TaskItem, TaskPriority } from "./types.js";
 import { todayISO } from "./util.js";
@@ -113,17 +111,24 @@ export function completeTask(vault: Vault, idOrText: string): CompleteResult {
     throw new Error(`Ambiguous — ${matches.length} open tasks match:\n${list}\nUse the task id.`);
   }
   const task = matches[0]!;
-  const abs = path.join(vault.dir, task.file);
-  const lines = fs.readFileSync(abs, "utf8").split("\n");
-  const line = lines[task.line];
-  if (line === undefined || !line.includes(task.raw.trim().slice(0, 20))) {
-    throw new Error(
-      `Task file changed on disk; re-list tasks and retry (${task.file}:${task.line})`,
-    );
-  }
-  lines[task.line] = `${line.replace(/\[([ /\-])\]/, "[x]")} ✅ ${todayISO()}`;
-  fs.writeFileSync(abs, lines.join("\n"), "utf8");
-  vault.refresh();
-  vault.commit(`big-brain: complete task in ${task.file}`);
-  return { task: { ...task, done: true, completedOn: todayISO() }, file: task.file };
+  const updated = vault.mutateNote(task.file, "complete task in", (note) => {
+    const current = note.tasks.find((candidate) => candidate.id === task.id && !candidate.done);
+    if (!current) {
+      throw new Error(
+        `Task changed before it could be completed; re-list tasks and retry (${task.id})`,
+      );
+    }
+    const lines = note.raw.split("\n");
+    const line = lines[current.line];
+    if (line === undefined) {
+      throw new Error(
+        `Task changed before it could be completed; re-list tasks and retry (${task.id})`,
+      );
+    }
+    lines[current.line] = `${line.replace(/\[([ /\-])\]/, "[x]")} ✅ ${todayISO()}`;
+    return lines.join("\n");
+  });
+  const completed = updated.tasks.find((candidate) => candidate.id === task.id && candidate.done);
+  if (!completed) throw new Error(`Task was written but could not be read back: ${task.id}`);
+  return { task: completed, file: task.file };
 }

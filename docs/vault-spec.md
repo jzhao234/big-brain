@@ -113,4 +113,4 @@ By convention tasks live in a project's `## Tasks` section or a daily note; `add
 
 ## Git
 
-Vaults are designed to live in a (private) git repo: files change atomically, tasks complete in-place, archive moves are renames. Nothing in the tooling requires git, but history + sync + merge is why files beat databases.
+Vaults are designed to live in a (private) git repo. Note writes use a same-directory temporary file and atomic rename; local CLI/MCP processes serialize mutations to the same note with a per-note lock under `.bigbrain/locks/`. Each writer reloads the note after acquiring the lock, so a stale process cannot overwrite a newer append or metadata update. Archive moves are renames. These locks coordinate processes sharing one filesystem, not separate git clones; cross-machine conflicts still use normal git conflict handling. Nothing in the tooling requires git, but history + sync + merge is why files beat databases.

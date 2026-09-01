@@ -8,6 +8,7 @@ import { parseNote } from "./parse.js";
 import { SearchIndex } from "./search.js";
 import type { BrainConfig, Note, NoteLink, SearchOptions, SearchResult } from "./types.js";
 import { nameKey, safeFilename, toPosix, todayISO } from "./util.js";
+import { atomicWriteFile, withNoteLock } from "./write.js";
 
 export interface CreateNoteInput {
   title: string;
@@ -171,9 +172,6 @@ export class Vault {
     const filename = `${safeFilename(input.title)}.md`;
     const rel = folder === "" ? filename : `${folder}/${filename}`;
     const abs = path.join(this.dir, rel);
-    if (fs.existsSync(abs) && !input.overwrite) {
-      throw new Error(`Note already exists: ${rel} (pass overwrite to replace it)`);
-    }
     const fm: Record<string, unknown> = {
       type,
       created: todayISO(),
@@ -182,13 +180,38 @@ export class Vault {
     };
     const body = input.body ?? "";
     const content = matter.stringify(body === "" ? "" : `\n${body.replace(/^\n+/, "")}`, fm);
-    fs.mkdirSync(path.dirname(abs), { recursive: true });
-    fs.writeFileSync(abs, content, "utf8");
-    this.refresh();
-    const note = this.notesByPath.get(rel);
-    if (!note) throw new Error(`Failed to read back created note: ${rel}`);
+    const note = withNoteLock(this.dir, rel, () => {
+      if (fs.existsSync(abs) && !input.overwrite) {
+        throw new Error(`Note already exists: ${rel} (pass overwrite to replace it)`);
+      }
+      atomicWriteFile(abs, content);
+      const created = this.reloadPath(rel);
+      if (!created) throw new Error(`Failed to read back created note: ${rel}`);
+      return created;
+    });
     this.commit(`big-brain: create ${note.path}`);
     return note;
+  }
+
+  /**
+   * Low-level note mutation primitive used by domain operations. The latest
+   * file is re-read while holding a cross-process lock, then replaced atomically.
+   */
+  mutateNote(ref: string, operation: string, mutate: (note: Note) => string): Note {
+    this.refresh();
+    const initial = this.get(ref);
+    if (!initial) throw new Error(`Note not found: ${ref}`);
+    const notePath = initial.path;
+    const updated = withNoteLock(this.dir, notePath, () => {
+      const note = this.reloadPath(notePath);
+      if (!note) throw new Error(`Note changed or moved before it could be written: ${notePath}`);
+      atomicWriteFile(note.absPath, mutate(note));
+      const reloaded = this.reloadPath(notePath);
+      if (!reloaded) throw new Error(`Failed to read back updated note: ${notePath}`);
+      return reloaded;
+    });
+    this.commit(`big-brain: ${operation} ${updated.path}`);
+    return updated;
   }
 
   /**
@@ -197,84 +220,85 @@ export class Vault {
    * otherwise appends to the end of the file.
    */
   appendToNote(ref: string, text: string, heading?: string): Note {
-    const note = this.get(ref);
-    if (!note) throw new Error(`Note not found: ${ref}`);
     const block = text.replace(/\s+$/, "");
-    let raw = note.raw;
-    if (heading) {
-      const lines = raw.split("\n");
-      const fmOffset = raw.startsWith("---") ? countFrontmatterLines(raw) : 0;
-      const target = note.headings.find((h) => nameKey(h.text) === nameKey(heading));
-      if (!target) {
-        raw = `${raw.replace(/\s+$/, "")}\n\n## ${heading}\n\n${block}\n`;
-      } else {
-        const startLine = fmOffset + target.line;
-        let endLine = lines.length;
-        for (const h of note.headings) {
-          if (h.line > target.line && h.depth <= target.depth) {
-            endLine = fmOffset + h.line;
-            break;
+    return this.mutateNote(ref, "append", (note) => {
+      let raw = note.raw;
+      if (heading) {
+        const lines = raw.split("\n");
+        const fmOffset = raw.startsWith("---") ? countFrontmatterLines(raw) : 0;
+        const target = note.headings.find((h) => nameKey(h.text) === nameKey(heading));
+        if (!target) {
+          raw = `${raw.replace(/\s+$/, "")}\n\n## ${heading}\n\n${block}\n`;
+        } else {
+          const startLine = fmOffset + target.line;
+          let endLine = lines.length;
+          for (const h of note.headings) {
+            if (h.line > target.line && h.depth <= target.depth) {
+              endLine = fmOffset + h.line;
+              break;
+            }
           }
+          // Trim trailing blank lines inside the section, insert, keep one blank line after.
+          let insertAt = endLine;
+          while (insertAt > startLine + 1 && (lines[insertAt - 1] ?? "").trim() === "") {
+            insertAt--;
+          }
+          lines.splice(insertAt, 0, block);
+          raw = lines.join("\n");
         }
-        // Trim trailing blank lines inside the section, insert, keep one blank line after.
-        let insertAt = endLine;
-        while (insertAt > startLine + 1 && (lines[insertAt - 1] ?? "").trim() === "") insertAt--;
-        lines.splice(insertAt, 0, block);
-        raw = lines.join("\n");
+      } else {
+        raw = `${raw.replace(/\s+$/, "")}\n\n${block}\n`;
       }
-    } else {
-      raw = `${raw.replace(/\s+$/, "")}\n\n${block}\n`;
-    }
-    fs.writeFileSync(note.absPath, raw.endsWith("\n") ? raw : `${raw}\n`, "utf8");
-    this.refresh();
-    this.commit(`big-brain: append ${note.path}`);
-    return this.notesByPath.get(note.path)!;
+      return raw.endsWith("\n") ? raw : `${raw}\n`;
+    });
   }
 
   /** Merge keys into a note's frontmatter (set a key to null to delete it). */
   updateFrontmatter(ref: string, updates: Record<string, unknown>): Note {
-    const note = this.get(ref);
-    if (!note) throw new Error(`Note not found: ${ref}`);
-    const fm = { ...note.frontmatter };
-    for (const [k, v] of Object.entries(updates)) {
-      if (v === null) delete fm[k];
-      else fm[k] = v;
-    }
-    fs.writeFileSync(note.absPath, matter.stringify(note.body, fm), "utf8");
-    this.refresh();
-    this.commit(`big-brain: update frontmatter ${note.path}`);
-    return this.notesByPath.get(note.path)!;
+    return this.mutateNote(ref, "update frontmatter", (note) => {
+      const fm = { ...note.frontmatter };
+      for (const [k, v] of Object.entries(updates)) {
+        if (v === null) delete fm[k];
+        else fm[k] = v;
+      }
+      return matter.stringify(note.body, fm);
+    });
   }
 
   /** Replace a note's body (frontmatter preserved). */
   replaceBody(ref: string, body: string): Note {
-    const note = this.get(ref);
-    if (!note) throw new Error(`Note not found: ${ref}`);
-    fs.writeFileSync(
-      note.absPath,
+    return this.mutateNote(ref, "rewrite", (note) =>
       matter.stringify(`\n${body.replace(/^\n+/, "")}`, note.frontmatter),
-      "utf8",
     );
-    this.refresh();
-    this.commit(`big-brain: rewrite ${note.path}`);
-    return this.notesByPath.get(note.path)!;
   }
 
   /** Move a note into the archive folder (non-destructive delete). */
   archiveNote(ref: string): Note {
+    this.refresh();
     const note = this.get(ref);
     if (!note) throw new Error(`Note not found: ${ref}`);
     if (note.archived) return note;
-    const destRel = `${this.config.folders.archive}/${note.path}`;
-    const destAbs = path.join(this.dir, destRel);
-    fs.mkdirSync(path.dirname(destAbs), { recursive: true });
-    if (fs.existsSync(destAbs)) {
-      throw new Error(`Archive destination already exists: ${destRel}`);
-    }
-    fs.renameSync(note.absPath, destAbs);
-    this.refresh();
+    const sourcePath = note.path;
+    const destRel = `${this.config.folders.archive}/${sourcePath}`;
+    const archived = withNoteLock(this.dir, sourcePath, () =>
+      withNoteLock(this.dir, destRel, () => {
+        const current = this.reloadPath(sourcePath);
+        if (!current)
+          throw new Error(`Note changed or moved before it could be archived: ${sourcePath}`);
+        const destAbs = path.join(this.dir, destRel);
+        fs.mkdirSync(path.dirname(destAbs), { recursive: true });
+        if (fs.existsSync(destAbs)) {
+          throw new Error(`Archive destination already exists: ${destRel}`);
+        }
+        fs.renameSync(current.absPath, destAbs);
+        this.notesByPath.delete(sourcePath);
+        const result = this.reloadPath(toPosix(destRel));
+        if (!result) throw new Error(`Failed to read back archived note: ${destRel}`);
+        return result;
+      }),
+    );
     this.commit(`big-brain: archive ${note.path}`);
-    return this.notesByPath.get(toPosix(destRel))!;
+    return archived;
   }
 
   /**
@@ -290,6 +314,14 @@ export class Vault {
   template(name: string): string | undefined {
     const file = path.join(this.dir, this.config.folders.templates, `${name}.md`);
     return fs.existsSync(file) ? fs.readFileSync(file, "utf8") : undefined;
+  }
+
+  /** Force one path to be reparsed even on filesystems with coarse mtimes. */
+  private reloadPath(rel: string): Note | undefined {
+    const posix = toPosix(rel);
+    this.notesByPath.delete(posix);
+    this.refresh();
+    return this.notesByPath.get(posix);
   }
 }
 

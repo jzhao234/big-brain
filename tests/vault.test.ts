@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getDailyNote, logToDaily } from "../src/core/daily.js";
 import { runDoctor } from "../src/core/doctor.js";
 import { vaultOverview } from "../src/core/overview.js";
@@ -21,6 +21,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -69,6 +70,59 @@ describe("Vault notes", () => {
     expect(body.indexOf("- second")).toBeLessThan(body.indexOf("## Other"));
     vault.appendToNote("Doc", "content", "Brand New");
     expect(vault.get("Doc")!.body).toContain("## Brand New");
+  });
+
+  it("preserves appends made through stale vault instances", () => {
+    vault.createNote({ title: "Shared", body: "start" });
+    const firstWriter = new Vault(dir);
+    const secondWriter = new Vault(dir);
+
+    firstWriter.appendToNote("Shared", "from first");
+    secondWriter.appendToNote("Shared", "from second");
+
+    const body = new Vault(dir).get("Shared")!.body;
+    expect(body).toContain("from first");
+    expect(body).toContain("from second");
+  });
+
+  it("preserves frontmatter changes made through stale vault instances", () => {
+    vault.createNote({ title: "Shared Metadata", frontmatter: { status: "active" } });
+    const firstWriter = new Vault(dir);
+    const secondWriter = new Vault(dir);
+
+    firstWriter.updateFrontmatter("Shared Metadata", { priority: "high" });
+    secondWriter.updateFrontmatter("Shared Metadata", { area: "work" });
+
+    const fm = new Vault(dir).get("Shared Metadata")!.frontmatter;
+    expect(fm).toMatchObject({ status: "active", priority: "high", area: "work" });
+  });
+
+  it("keeps the original note and releases its lock when a mutation fails", () => {
+    vault.createNote({ title: "Recoverable", body: "original" });
+
+    expect(() =>
+      vault.mutateNote("Recoverable", "broken mutation", () => {
+        throw new Error("mutation failed");
+      }),
+    ).toThrow("mutation failed");
+
+    expect(new Vault(dir).get("Recoverable")!.body).toContain("original");
+    expect(() => vault.appendToNote("Recoverable", "after failure")).not.toThrow();
+    expect(new Vault(dir).get("Recoverable")!.body).toContain("after failure");
+  });
+
+  it("keeps the original note when its atomic replacement fails", () => {
+    vault.createNote({ title: "Atomic", body: "original" });
+    const file = path.join(dir, "notes", "Atomic.md");
+    const original = fs.readFileSync(file, "utf8");
+    vi.spyOn(fs, "renameSync").mockImplementationOnce(() => {
+      throw new Error("rename failed");
+    });
+
+    expect(() => vault.appendToNote("Atomic", "should not land")).toThrow("rename failed");
+
+    expect(fs.readFileSync(file, "utf8")).toBe(original);
+    expect(fs.readdirSync(path.dirname(file)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
 
   it("updates and deletes frontmatter keys", () => {
