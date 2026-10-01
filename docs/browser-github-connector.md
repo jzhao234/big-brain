@@ -30,4 +30,4 @@ The repo is the single source of truth. Your VPS has [git auto-commit](vault-spe
 
 ## Honest tradeoff
 
-This is the low-effort, low-exposure option and it's genuinely useful for loading context and light edits from anywhere. If you want the *full* toolset (overview, search, task ops) in the browser, that requires running big-brain as a secured remote MCP server (a tunnel + auth) — more setup and your brain on a public endpoint. For most browser use, the GitHub connector is the right call; keep Claude Code in the terminal for the rich workflow.
+This is the low-effort, low-exposure option and it's genuinely useful for loading context and light edits from anywhere. If you want the *full* toolset (overview, search, task ops) in the browser, Big Brain now has an authenticated Streamable HTTP preview; hosted connectors that require OAuth still need an OAuth-capable gateway. See [MCP setup](mcp-setup.md#remote-streamable-http-preview). For most browser use, the GitHub connector remains the simplest starting point; keep Claude Code in the terminal for the rich local workflow.

@@ -473,4 +473,37 @@ program
     child.on("exit", (code) => process.exit(code ?? 0));
   });
 
+program
+  .command("mcp-http")
+  .description("run the authenticated Streamable HTTP MCP server")
+  .option("--host <host>", "listen address", process.env.BIG_BRAIN_MCP_HOST ?? "127.0.0.1")
+  .option("--port <port>", "listen port", process.env.BIG_BRAIN_MCP_PORT ?? "3333")
+  .option(
+    "--allowed-hosts <hosts>",
+    "comma-separated Host header allowlist",
+    process.env.BIG_BRAIN_MCP_ALLOWED_HOSTS,
+  )
+  .option(
+    "--allowed-origins <origins>",
+    "comma-separated browser Origin allowlist (requests without Origin are always allowed)",
+    process.env.BIG_BRAIN_MCP_ALLOWED_ORIGINS,
+  )
+  .action(
+    (opts: { host: string; port: string; allowedHosts?: string; allowedOrigins?: string }) => {
+      const globalOpts = program.opts<{ vault?: string }>();
+      const serverPath = path.join(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "..",
+        "mcp",
+        "http.js",
+      );
+      const args = ["--host", opts.host, "--port", opts.port];
+      if (globalOpts.vault) args.push("--vault", globalOpts.vault);
+      if (opts.allowedHosts) args.push("--allowed-hosts", opts.allowedHosts);
+      if (opts.allowedOrigins) args.push("--allowed-origins", opts.allowedOrigins);
+      const child = spawn(process.execPath, [serverPath, ...args], { stdio: "inherit" });
+      child.on("exit", (code) => process.exit(code ?? 0));
+    },
+  );
+
 program.parseAsync().catch(fail);

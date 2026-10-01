@@ -24,7 +24,7 @@ git clone https://github.com/jzhao234/big-brain.git
 cd big-brain
 npm install
 npm run build
-npm link          # puts `big-brain` and `big-brain-mcp` on your PATH
+npm link          # puts the CLI and both MCP server commands on your PATH
 ```
 
 `npm link` skips `-g` install quirks and lets you `git pull && npm run build` to update later. (Once published, this becomes `npm i -g big-brain`.)
@@ -50,7 +50,7 @@ Then connect an AI tool (below) and, optionally, seed the vault from your existi
 
 ## Connect your AI tools
 
-The MCP server is the same everywhere: command `big-brain-mcp`, vault chosen by `--vault <dir>` or the `BIG_BRAIN_VAULT` env var.
+For local clients, run `big-brain-mcp`; the vault is chosen by `--vault <dir>` or the `BIG_BRAIN_VAULT` environment variable.
 
 **Claude Code**
 
@@ -72,9 +72,19 @@ claude mcp list        # expect: big-brain ... ✔ Connected
 }
 ```
 
-**ChatGPT and other MCP clients** — any client that speaks MCP over stdio works the same way. For clients without MCP, the CLI's `--json` output makes the vault scriptable.
+**Other local MCP clients** — any client that speaks MCP over stdio works the same way. For clients without MCP, the CLI's `--json` output makes the vault scriptable.
 
-**Browser (claude.ai / ChatGPT)** — cloud AIs can't launch a local stdio server. The zero-infra option is to connect them to your vault's **GitHub repo** and let them read/write the markdown directly (you lose the computed overview/search/task tools — it's raw file access). See [docs/browser-github-connector.md](docs/browser-github-connector.md) and paste [prompts/browser-github-instructions.md](prompts/browser-github-instructions.md).
+**Remote MCP preview** — Big Brain can expose the same 22 tools through an authenticated Streamable HTTP endpoint:
+
+```bash
+export BIG_BRAIN_MCP_TOKEN="$(openssl rand -hex 32)"
+big-brain mcp-http --vault ~/brain
+# endpoint: http://127.0.0.1:3333/mcp
+```
+
+It binds to localhost by default and checks `Authorization: Bearer <token>` before parsing JSON. Bodies are capped at 1 MB (larger requests get HTTP 413 with a JSON-RPC error). Requests without `Origin` are allowed; requests with one require an exact match in `--allowed-origins` / `BIG_BRAIN_MCP_ALLOWED_ORIGINS`, which defaults to empty and refuses browser origins. Keep it behind an HTTPS reverse proxy or secure tunnel; never expose the plain HTTP listener directly. The static token is the first self-hosted transport milestone, not an OAuth implementation—browser connectors that require OAuth still need an OAuth-capable gateway. See [docs/mcp-setup.md](docs/mcp-setup.md#remote-streamable-http-preview).
+
+**Browser fallback (claude.ai / ChatGPT)** — the zero-infrastructure option is to connect the AI to your vault's **GitHub repo** and let it read/write the markdown directly (you lose the computed overview/search/task tools — it's raw file access). See [docs/browser-github-connector.md](docs/browser-github-connector.md) and paste [prompts/browser-github-instructions.md](prompts/browser-github-instructions.md).
 
 Then teach the assistant how to use the vault: Claude Code reads the vault's `CLAUDE.md` automatically; for other tools, paste [`prompts/agent-instructions.md`](prompts/agent-instructions.md) into their custom instructions.
 

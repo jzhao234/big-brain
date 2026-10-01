@@ -26,7 +26,8 @@
   },
   "bin": {
     "big-brain": "dist/cli/index.js",
-    "big-brain-mcp": "dist/mcp/index.js"
+    "big-brain-mcp": "dist/mcp/index.js",
+    "big-brain-mcp-http": "dist/mcp/http.js"
   },
   "main": "dist/core/index.js",
   "files": [
@@ -49,6 +50,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "commander": "^13.1.0",
+    "express": "^5.2.1",
     "fast-glob": "^3.3.3",
     "gray-matter": "^4.0.3",
     "js-yaml": "^4.3.2",
@@ -58,9 +60,10 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
+    "@types/express": "^5.0.6",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.15.0",
     "typescript": "^5.8.0",
-    "vitest": "^3.1.0"
+    "vitest": "^4.1.11"
   }
 }
