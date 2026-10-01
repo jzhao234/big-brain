@@ -13,7 +13,7 @@ import { createProject, listProjects, setProjectStatus } from "../core/projects.
 import { relatedNotes } from "../core/related.js";
 import { initVault } from "../core/scaffold.js";
 import { defaultClaudeSkillsDir, installSkills } from "../core/skills.js";
-import { addTask, completeTask, listTasks } from "../core/tasks.js";
+import { type TaskStatus, addTask, completeTask, listTasks, updateTask } from "../core/tasks.js";
 import type { TaskItem } from "../core/types.js";
 import { todayISO } from "../core/util.js";
 import { Vault } from "../core/vault.js";
@@ -44,6 +44,14 @@ function taskLine(t: TaskItem): string {
   const due = t.due ? pc.yellow(` 📅 ${t.due}`) : "";
   const prio = t.priority === "high" ? pc.red(" ⏫") : t.priority === "low" ? " 🔽" : "";
   return `${pc.dim(t.id)} ${box} ${t.text}${prio}${due} ${pc.dim(`(${t.noteTitle})`)}`;
+}
+
+function parseLimit(value: string): number {
+  const limit = Number(value);
+  if (!Number.isSafeInteger(limit) || limit < 1) {
+    throw new Error(`Invalid limit: ${value} (want a positive integer)`);
+  }
+  return limit;
 }
 
 program
@@ -94,7 +102,7 @@ program
         tag: opts.tag as string | undefined,
         folder: opts.folder as string | undefined,
         status: opts.status as string | undefined,
-        limit: Number(opts.limit),
+        limit: parseLimit(String(opts.limit)),
       };
       const query = words.join(" ");
       const results = opts.lexical
@@ -121,7 +129,7 @@ program
     try {
       const vault = openVault();
       const results = await relatedNotes(vault, refWords.join(" "), {
-        limit: Number(opts.limit),
+        limit: parseLimit(opts.limit),
       });
       if (opts.json) return console.log(JSON.stringify(results, null, 2));
       if (results.length === 0) return console.log(pc.dim("No related notes found."));
@@ -280,7 +288,7 @@ program
     },
   );
 
-const task = program.command("task").description("add or complete tasks");
+const task = program.command("task").description("add, update, or complete tasks");
 
 task
   .command("add <text...>")
@@ -290,6 +298,9 @@ task
   .option("-p, --priority <p>", "high|low")
   .action((words: string[], opts: { note?: string; due?: string; priority?: string }) => {
     try {
+      if (opts.priority !== undefined && opts.priority !== "high" && opts.priority !== "low") {
+        throw new Error(`Invalid task priority: ${opts.priority} (want high or low)`);
+      }
       const vault = openVault();
       const t = addTask(vault, {
         text: words.join(" "),
@@ -315,6 +326,53 @@ task
       fail(err);
     }
   });
+
+task
+  .command("update <task...>")
+  .description("update a task by id or unique text fragment")
+  .option("--text <text>", "replace the task description")
+  .option("--due <date|none>", "YYYY-MM-DD, or 'none' to clear")
+  .option("--priority <priority>", "high|low|normal")
+  .option("--status <status>", "open|done|cancelled")
+  .action(
+    (
+      words: string[],
+      opts: { text?: string; due?: string; priority?: string; status?: string },
+    ) => {
+      try {
+        if (opts.priority !== undefined && !["high", "low", "normal"].includes(opts.priority)) {
+          throw new Error(`Invalid task priority: ${opts.priority} (want high, low, or normal)`);
+        }
+        if (opts.status !== undefined && !["open", "done", "cancelled"].includes(opts.status)) {
+          throw new Error(`Invalid task status: ${opts.status} (want open, done, or cancelled)`);
+        }
+        const vault = openVault();
+        const priority =
+          opts.priority === "high" || opts.priority === "low"
+            ? opts.priority
+            : opts.priority === "normal"
+              ? null
+              : undefined;
+        const result = updateTask(vault, words.join(" "), {
+          text: opts.text,
+          due:
+            opts.due === undefined
+              ? undefined
+              : opts.due.toLowerCase() === "none"
+                ? null
+                : opts.due,
+          priority,
+          status: opts.status as TaskStatus | undefined,
+        });
+        const renamed = result.task.id === result.previousId ? "" : ` (new id ${result.task.id})`;
+        console.log(
+          pc.green(`Updated task${renamed} in ${result.file}: ${result.task.raw.trim()}`),
+        );
+      } catch (err) {
+        fail(err);
+      }
+    },
+  );
 
 program
   .command("projects")
