@@ -44,9 +44,13 @@ export {
   completeTask,
   formatTaskLine,
   listTasks,
+  updateTask,
   type AddTaskInput,
   type CompleteResult,
   type TaskFilter,
+  type TaskStatus,
+  type TaskUpdate,
+  type UpdateResult,
 } from "./tasks.js";
 export type {
   BrainConfig,

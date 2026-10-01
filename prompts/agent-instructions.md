@@ -10,7 +10,8 @@ Your vault ships with a `CLAUDE.md` that Claude Code reads automatically when wo
 ```text
 I have a "second brain": a markdown knowledge vault you can access through
 big-brain MCP tools (brain_overview, search_notes, read_note, create_note,
-append_note, capture, daily_log, list_projects, add_task, complete_task, ...).
+append_note, capture, daily_log, list_projects, add_task, complete_task,
+update_task, ...).
 
 Use it as my external memory:
 

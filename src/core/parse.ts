@@ -19,11 +19,12 @@ const FENCE_OPEN_RE = /^\s{0,3}(`{3,}(?=[^`]*$)|~{3,})/;
 const FENCE_CLOSE_RE = /^\s{0,3}(`{3,}|~{3,})\s*$/;
 const TASK_RE = /^\s*[-*] \[([ xX/\-])\]\s+(.*)$/;
 
-const DUE_RE = /📅\s*(\d{4}-\d{2}-\d{2})/u;
-const SCHEDULED_RE = /⏳\s*(\d{4}-\d{2}-\d{2})/u;
-const DONE_RE = /✅\s*(\d{4}-\d{2}-\d{2})/u;
-const PRIO_HIGH_RE = /⏫/u;
-const PRIO_LOW_RE = /🔽/u;
+// Each marker may carry a VS16 (U+FE0F) emoji-presentation selector.
+const DUE_RE = /📅\uFE0F?\s*(\d{4}-\d{2}-\d{2})/u;
+const SCHEDULED_RE = /⏳\uFE0F?\s*(\d{4}-\d{2}-\d{2})/u;
+const DONE_RE = /✅\uFE0F?\s*(\d{4}-\d{2}-\d{2})/u;
+const PRIO_HIGH_RE = /⏫\uFE0F?/u;
+const PRIO_LOW_RE = /🔽\uFE0F?/u;
 
 export function extractLinks(body: string): NoteLink[] {
   const clean = stripCode(body);

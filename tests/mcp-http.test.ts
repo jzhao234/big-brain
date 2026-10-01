@@ -215,7 +215,13 @@ describe("remote MCP server", () => {
     const result = await client.listTools();
 
     expect(result.tools.map((tool) => tool.name)).toEqual(
-      expect.arrayContaining(["brain_overview", "search_notes", "append_note", "list_tasks"]),
+      expect.arrayContaining([
+        "brain_overview",
+        "search_notes",
+        "append_note",
+        "list_tasks",
+        "update_task",
+      ]),
     );
     const overview = await client.callTool({ name: "brain_overview", arguments: {} });
     expect(JSON.stringify(overview.content)).toContain("Remote Test");

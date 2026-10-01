@@ -131,6 +131,16 @@ describe("extractTasks edge cases", () => {
     expect(tasks.map((t) => t.text)).toEqual(["real task"]);
   });
 
+  it("reads metadata emoji that carry a VS16 selector", () => {
+    const [task] = extractTasks(
+      "- [ ] fix \u23EB\uFE0F \u{1F4C5}\uFE0F 2026-01-10",
+      "a.md",
+      "A",
+      "note",
+    );
+    expect(task).toMatchObject({ text: "fix", due: "2026-01-10", priority: "high" });
+  });
+
   it("marks [-] tasks as cancelled, not done", () => {
     const [task] = extractTasks("- [-] dropped idea", "a.md", "A", "note");
     expect(task).toMatchObject({ done: false, cancelled: true });

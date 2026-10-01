@@ -7,7 +7,7 @@ import { runDoctor } from "../src/core/doctor.js";
 import { vaultOverview } from "../src/core/overview.js";
 import { createProject, listProjects, setProjectStatus } from "../src/core/projects.js";
 import { initVault } from "../src/core/scaffold.js";
-import { addTask, completeTask, listTasks } from "../src/core/tasks.js";
+import { addTask, completeTask, listTasks, updateTask } from "../src/core/tasks.js";
 import { todayISO } from "../src/core/util.js";
 import { Vault } from "../src/core/vault.js";
 
@@ -244,6 +244,85 @@ describe("projects and tasks", () => {
     expect(() => addTask(vault, { text: "one\n- [ ] two", note: "R" })).toThrow(/single line/);
     expect(() => addTask(vault, { text: "x", note: "R", due: "2026-02-30" })).toThrow(/due date/);
     expect(listTasks(vault, { project: "R" })).toHaveLength(0);
+  });
+
+  it("updates a task in place: reschedule, reprioritize, reword, keep other metadata", () => {
+    createProject(vault, { title: "U" });
+    vault.appendToNote(
+      "U",
+      "- [ ] ship it #work ⏫ ⏳ 2026-01-01 📅 2026-01-10\n- [ ] untouched",
+      "Tasks",
+    );
+    const file = path.join(dir, "projects", "U.md");
+    const original = listTasks(vault, { project: "U" }).find((t) => t.text.startsWith("ship"))!;
+
+    const moved = updateTask(vault, original.id, { due: "2026-02-01", priority: "low" });
+    expect(moved.task).toMatchObject({
+      due: "2026-02-01",
+      priority: "low",
+      scheduled: "2026-01-01",
+    });
+    expect(moved.task.id).toBe(original.id);
+
+    const reworded = updateTask(vault, original.id, { text: "ship v2 #work", due: null });
+    expect(reworded.task).toMatchObject({ text: "ship v2 #work", priority: "low", due: undefined });
+    expect(reworded.task.scheduled).toBe("2026-01-01");
+    expect(reworded.previousId).toBe(original.id);
+    expect(reworded.task.id).not.toBe(original.id);
+    expect(fs.readFileSync(file, "utf8")).toContain("- [ ] untouched");
+  });
+
+  it("reopens, cancels, and completes via status", () => {
+    createProject(vault, { title: "V" });
+    const t = addTask(vault, { text: "flip me", note: "V", due: "2026-03-01" });
+    completeTask(vault, t.id);
+    const reopened = updateTask(vault, t.id, { status: "open" });
+    expect(reopened.task).toMatchObject({ done: false, completedOn: undefined, due: "2026-03-01" });
+    expect(reopened.task.raw).not.toContain("✅");
+
+    const cancelled = updateTask(vault, "flip me", { status: "cancelled" });
+    expect(cancelled.task).toMatchObject({ cancelled: true, done: false });
+    expect(listTasks(vault, { project: "V" })).toHaveLength(0);
+
+    const done = updateTask(vault, t.id, { status: "done" });
+    expect(done.task).toMatchObject({ done: true, completedOn: todayISO() });
+    expect(done.task.raw.match(/✅/gu)).toHaveLength(1);
+  });
+
+  it("keeps VS16-styled metadata when rewording", () => {
+    createProject(vault, { title: "X" });
+    vault.appendToNote("X", "- [ ] old words \u{1F4C5}\uFE0F 2026-01-10", "Tasks");
+    const [t] = listTasks(vault, { project: "X" });
+    const result = updateTask(vault, t!.id, { text: "new words" });
+    expect(result.task).toMatchObject({ text: "new words", due: "2026-01-10" });
+  });
+
+  it("refuses to complete a task that was completed after it was listed", () => {
+    createProject(vault, { title: "Y" });
+    const t = addTask(vault, { text: "race me", note: "Y" });
+    const file = path.join(dir, "projects", "Y.md");
+    const realMutate = vault.mutateNote.bind(vault);
+    vi.spyOn(vault, "mutateNote").mockImplementationOnce((ref, op, mutate) => {
+      // Another writer completes the task between listing and locking.
+      fs.writeFileSync(
+        file,
+        fs.readFileSync(file, "utf8").replace("- [ ] race me", "- [x] race me ✅ 2026-01-01"),
+      );
+      return realMutate(ref, op, mutate);
+    });
+    expect(() => completeTask(vault, t.id)).toThrow(/changed before/);
+    expect(fs.readFileSync(file, "utf8")).toContain("✅ 2026-01-01");
+  });
+
+  it("rejects empty, multiline, and invalid updates", () => {
+    createProject(vault, { title: "W" });
+    const t = addTask(vault, { text: "guarded", note: "W" });
+    expect(() => updateTask(vault, t.id, {})).toThrow(/Nothing to update/);
+    expect(() => updateTask(vault, t.id, { text: "a\n- [ ] b" })).toThrow(/single line/);
+    expect(() => updateTask(vault, t.id, { text: "  " })).toThrow(/empty/);
+    expect(() => updateTask(vault, t.id, { due: "2026-02-30" })).toThrow(/due date/);
+    expect(() => updateTask(vault, "no such task", { status: "done" })).toThrow(/No task matches/);
+    expect(listTasks(vault, { project: "W" })[0]!.raw).toBe("- [ ] guarded");
   });
 
   it("keeps cancelled tasks out of the open list", () => {

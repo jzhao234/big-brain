@@ -98,41 +98,149 @@ export interface CompleteResult {
   file: string;
 }
 
-/** Mark a task done by id (or unique text prefix), stamping the completion date. */
-export function completeTask(vault: Vault, idOrText: string): CompleteResult {
-  const open = listTasks(vault, { status: "open", includeArchived: true });
-  let matches = open.filter((t) => t.id === idOrText);
+/** Find exactly one task by id, falling back to a case-insensitive text fragment. */
+function resolveTask(candidates: TaskItem[], idOrText: string, kind: string): TaskItem {
+  let matches = candidates.filter((t) => t.id === idOrText);
   if (matches.length === 0) {
     const needle = idOrText.trim().toLowerCase();
-    matches = open.filter((t) => t.text.toLowerCase().includes(needle));
+    if (needle !== "") matches = candidates.filter((t) => t.text.toLowerCase().includes(needle));
   }
-  if (matches.length === 0) throw new Error(`No open task matches: ${idOrText}`);
+  if (matches.length === 0) throw new Error(`No ${kind}task matches: ${idOrText}`);
   if (matches.length > 1) {
     const list = matches
       .slice(0, 5)
       .map((t) => `  ${t.id}  ${t.text} (${t.file})`)
       .join("\n");
-    throw new Error(`Ambiguous — ${matches.length} open tasks match:\n${list}\nUse the task id.`);
+    throw new Error(`Ambiguous — ${matches.length} ${kind}tasks match:\n${list}\nUse the task id.`);
   }
-  const task = matches[0]!;
-  const updated = vault.mutateNote(task.file, "complete task in", (note) => {
-    const current = note.tasks.find((candidate) => candidate.id === task.id && !candidate.done);
-    if (!current) {
-      throw new Error(
-        `Task changed before it could be completed; re-list tasks and retry (${task.id})`,
-      );
-    }
+  return matches[0]!;
+}
+
+/**
+ * Rewrite one task line under the note lock. The task is re-found by id in the
+ * latest file contents (and must still satisfy `stillApplies`), so a concurrent
+ * edit fails loudly instead of touching the wrong line or undoing a change. Returns the task as re-parsed from its (unchanged) line index.
+ */
+function rewriteTask(
+  vault: Vault,
+  task: TaskItem,
+  operation: string,
+  edit: (line: string) => string,
+  stillApplies: (current: TaskItem) => boolean = () => true,
+): TaskItem {
+  const stale = () =>
+    new Error(`Task changed before it could be updated; re-list tasks and retry (${task.id})`);
+  let lineIndex = -1;
+  const updated = vault.mutateNote(task.file, operation, (note) => {
+    const current = note.tasks.find((candidate) => candidate.id === task.id);
     const lines = note.raw.split("\n");
-    const line = lines[current.line];
-    if (line === undefined) {
-      throw new Error(
-        `Task changed before it could be completed; re-list tasks and retry (${task.id})`,
-      );
-    }
-    lines[current.line] = `${line.replace(/\[([ /\-])\]/, "[x]")} ✅ ${todayISO()}`;
+    const line = current ? lines[current.line] : undefined;
+    if (!current || line === undefined || !stillApplies(current)) throw stale();
+    lineIndex = current.line;
+    lines[lineIndex] = edit(line);
     return lines.join("\n");
   });
-  const completed = updated.tasks.find((candidate) => candidate.id === task.id && candidate.done);
-  if (!completed) throw new Error(`Task was written but could not be read back: ${task.id}`);
+  const result = updated.tasks.find((candidate) => candidate.line === lineIndex);
+  if (!result) throw new Error(`Task was written but could not be read back: ${task.id}`);
+  return result;
+}
+
+/** Mark a task done by id (or unique text prefix), stamping the completion date. */
+export function completeTask(vault: Vault, idOrText: string): CompleteResult {
+  const open = listTasks(vault, { status: "open", includeArchived: true });
+  const task = resolveTask(open, idOrText, "open ");
+  const completed = rewriteTask(
+    vault,
+    task,
+    "complete task in",
+    (line) => setStatus(line, "done"),
+    (current) => !current.done && !current.cancelled,
+  );
   return { task: completed, file: task.file };
+}
+
+export type TaskStatus = "open" | "done" | "cancelled";
+
+export interface TaskUpdate {
+  /** New description; existing dates and priority are kept unless also changed. */
+  text?: string;
+  /** New due date (YYYY-MM-DD), or null to clear it. */
+  due?: string | null;
+  /** New priority, or null for normal. */
+  priority?: TaskPriority | null;
+  /** Reopen, complete (stamps today), or cancel the task. */
+  status?: TaskStatus;
+}
+
+export interface UpdateResult {
+  task: TaskItem;
+  file: string;
+  /** The id before the update; differs from `task.id` when the text changed. */
+  previousId: string;
+}
+
+// Same patterns as the parser (optional VS16 selector); global so every occurrence is removed.
+const DUE_TOKEN = /\s*📅\uFE0F?\s*\d{4}-\d{2}-\d{2}/gu;
+const DONE_TOKEN = /\s*✅\uFE0F?\s*\d{4}-\d{2}-\d{2}/gu;
+const PRIORITY_TOKEN = /\s*(?:⏫|🔽)\uFE0F?/gu;
+const METADATA_TOKEN = /(?:(?:⏫|🔽)\uFE0F?|(?:📅|⏳|✅)\uFE0F?\s*\d{4}-\d{2}-\d{2})/gu;
+const LINE_RE = /^(\s*[-*] \[)([ xX/\-])(\]\s+)(.*)$/;
+
+function splitLine(line: string): { head: string; box: string; gap: string; rest: string } {
+  const m = LINE_RE.exec(line);
+  if (!m) throw new Error(`Not a task line: ${line}`);
+  return { head: m[1]!, box: m[2]!, gap: m[3]!, rest: m[4]! };
+}
+
+function setStatus(line: string, status: TaskStatus): string {
+  const { head, gap, rest } = splitLine(line);
+  const box = status === "done" ? "x" : status === "cancelled" ? "-" : " ";
+  let next = rest.replace(DONE_TOKEN, "");
+  if (status === "done") next += ` ✅ ${todayISO()}`;
+  return `${head}${box}${gap}${next.trim()}`;
+}
+
+function applyUpdate(line: string, update: TaskUpdate): string {
+  const { head, box, gap } = splitLine(line);
+  let { rest } = splitLine(line);
+  if (update.text !== undefined) {
+    const metadata = rest.match(METADATA_TOKEN) ?? [];
+    rest = [update.text, ...metadata].join(" ");
+  }
+  if (update.priority !== undefined) {
+    rest = rest.replace(PRIORITY_TOKEN, "");
+    if (update.priority === "high") rest += " ⏫";
+    if (update.priority === "low") rest += " 🔽";
+  }
+  if (update.due !== undefined) {
+    rest = rest.replace(DUE_TOKEN, "");
+    if (update.due !== null) rest += ` 📅 ${update.due}`;
+  }
+  let result = `${head}${box}${gap}${rest.trim()}`;
+  if (update.status !== undefined) result = setStatus(result, update.status);
+  return result;
+}
+
+/**
+ * Edit a task in place — reschedule, reprioritize, reword, reopen, or cancel —
+ * matched by id (or a unique text fragment) across open, done, and cancelled
+ * tasks. Only the task's own line is rewritten.
+ */
+export function updateTask(vault: Vault, idOrText: string, changes: TaskUpdate): UpdateResult {
+  if (Object.values(changes).every((v) => v === undefined)) {
+    throw new Error("Nothing to update: pass text, due, priority, or status");
+  }
+  const text = changes.text?.trim();
+  if (text !== undefined) {
+    if (text === "") throw new Error("Task text is empty");
+    if (/[\r\n]/.test(text)) throw new Error("Task text must be a single line");
+  }
+  const update: TaskUpdate = { ...changes, text };
+  if (update.due != null && !isCalendarDate(update.due)) {
+    throw new Error(`Invalid due date (want YYYY-MM-DD): ${update.due}`);
+  }
+  const all = listTasks(vault, { status: "all", includeArchived: true });
+  const task = resolveTask(all, idOrText, "");
+  const updated = rewriteTask(vault, task, "update task in", (line) => applyUpdate(line, update));
+  return { task: updated, file: task.file, previousId: task.id };
 }

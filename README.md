@@ -5,7 +5,7 @@
 Your AI tools each keep their own memory of you, siloed and invisible. big-brain inverts that: **one knowledge vault you own, that every assistant reads and writes.** Claude Code, Claude Desktop, ChatGPT, Cursor — they all see the same projects, the same tasks, the same notes. Switch models freely; your context comes with you.
 
 - **Plain markdown files.** No database, no lock-in. Open the vault in Obsidian, grep it, put it in git.
-- **MCP server** with 22 tools: search, capture, daily logs, project and task management, link graph, related notes, vault health.
+- **MCP server** with 23 tools: search, capture, daily logs, project and task management, link graph, related notes, vault health.
 - **CLI** for humans: `big-brain status`, `big-brain capture`, `big-brain tasks`.
 - **Claude Code skills** — `/brain`, `/capture`, `/weekly` — installed with one command.
 - **Projects as the unit of work** — each is one file with a goal, checkbox tasks, and a running log.
@@ -74,7 +74,7 @@ claude mcp list        # expect: big-brain ... ✔ Connected
 
 **Other local MCP clients** — any client that speaks MCP over stdio works the same way. For clients without MCP, the CLI's `--json` output makes the vault scriptable.
 
-**Remote MCP preview** — Big Brain can expose the same 22 tools through an authenticated Streamable HTTP endpoint:
+**Remote MCP preview** — Big Brain can expose the same 23 tools through an authenticated Streamable HTTP endpoint:
 
 ```bash
 export BIG_BRAIN_MCP_TOKEN="$(openssl rand -hex 32)"
@@ -192,7 +192,7 @@ Notes are markdown + YAML frontmatter (`type`, `tags`, `status`, `due`…). Task
 | `capture` | Quick capture to inbox |
 | `daily_note` / `daily_log` | Daily notes and timestamped work journal |
 | `list_projects` / `create_project` / `set_project_status` | Project lifecycle |
-| `list_tasks` / `add_task` / `complete_task` | Checkbox tasks across the vault |
+| `list_tasks` / `add_task` / `complete_task` / `update_task` | Checkbox tasks across the vault; `update_task` reschedules, reprioritizes, rewords, reopens, or cancels one in place |
 | `note_links` | Outgoing links + backlinks for a note |
 | `related_notes` | Related notes with reasons: links, co-citations, rare shared tags, title mentions, semantic similarity |
 | `list_tags` / `vault_health` | Tag census; broken links, stale projects, bloated/duplicate notes, overdue tasks |

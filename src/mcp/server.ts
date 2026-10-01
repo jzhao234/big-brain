@@ -6,7 +6,7 @@ import { hybridSearch } from "../core/embeddings.js";
 import { renderOverview, vaultOverview } from "../core/overview.js";
 import { createProject, listProjects, setProjectStatus } from "../core/projects.js";
 import { relatedNotes } from "../core/related.js";
-import { addTask, completeTask, listTasks } from "../core/tasks.js";
+import { addTask, completeTask, listTasks, updateTask } from "../core/tasks.js";
 import type { Note } from "../core/types.js";
 import { nowStamp, todayISO } from "../core/util.js";
 import type { Vault } from "../core/vault.js";
@@ -485,6 +485,43 @@ export function buildServer(vault: Vault): McpServer {
       fresh(() => {
         const result = completeTask(vault, task);
         return text(`Done: ${result.task.text} (${result.file})`);
+      }),
+  );
+
+  server.registerTool(
+    "update_task",
+    {
+      title: "Update a task",
+      description:
+        "Edit one task in place: reschedule (due), reprioritize, reword, reopen, or cancel — without rewriting the note. Matches by id (from list_tasks) or a unique text fragment, including done and cancelled tasks. Use complete_task to finish a task.",
+      inputSchema: {
+        task: z.string().describe("Task id or unique text fragment"),
+        text: z
+          .string()
+          .optional()
+          .describe("New description; dates and priority are kept. Include any #tags to keep"),
+        due: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
+          .nullable()
+          .optional()
+          .describe("New due date YYYY-MM-DD, or null to clear"),
+        priority: z
+          .enum(["high", "low"])
+          .nullable()
+          .optional()
+          .describe("New priority, or null for normal"),
+        status: z
+          .enum(["open", "done", "cancelled"])
+          .optional()
+          .describe("'open' reopens, 'done' completes (stamps today), 'cancelled' drops it"),
+      },
+    },
+    async ({ task, ...changes }) =>
+      fresh(() => {
+        const result = updateTask(vault, task, changes);
+        const renamed = result.task.id !== result.previousId ? ` (new id ${result.task.id})` : "";
+        return text(`Updated task${renamed} in ${result.file}: ${result.task.raw.trim()}`);
       }),
   );
 

@@ -100,10 +100,12 @@ Any `- [ ]` / `- [x]` checkbox line in any note is a task. Metadata uses [Obsidi
 | --- | --- |
 | `📅 YYYY-MM-DD` | due date |
 | `⏳ YYYY-MM-DD` | scheduled date |
-| `✅ YYYY-MM-DD` | completion date (stamped by `complete_task`) |
+| `✅ YYYY-MM-DD` | completion date (stamped by `complete_task`; removed when `update_task` reopens) |
 | `⏫` / `🔽` | high / low priority |
 
-Task IDs (shown by `list_tasks` / `big-brain tasks`) are derived from file path + task text, so they're stable until the task is reworded.
+`- [-]` marks a task cancelled (Obsidian Tasks convention): it's excluded from open, overdue, and next-task views but still listed with `status: all`.
+
+Task IDs (shown by `list_tasks` / `big-brain tasks`) are derived from file path + task text, so they're stable until the task is reworded. `update_task` reports the new id when it rewords one.
 
 By convention tasks live in a project's `## Tasks` section or a daily note; `add_task` defaults accordingly.
 
