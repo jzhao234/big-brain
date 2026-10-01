@@ -25,6 +25,20 @@ const WEIGHTS = {
   semantic: 4, // scaled by cosine similarity
 };
 
+const MIN_MENTION_LENGTH = 5; // shorter titles ("Home", "Q3") match too much prose
+
+/**
+ * Matcher for a note's title as a whole phrase (case-insensitive), so "Ship"
+ * doesn't match "shipping". Match against NFC-normalized text so composed and
+ * decomposed accents agree. Undefined for titles too short to be a signal.
+ */
+function mentionMatcher(title: string): RegExp | undefined {
+  const t = title.normalize("NFC").trim();
+  if (t.length < MIN_MENTION_LENGTH) return undefined;
+  const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "iu");
+}
+
 export interface RelatedOptions {
   limit?: number;
   /** Injectable for tests. When omitted and embeddings are enabled, the default local provider is used. */
@@ -66,7 +80,8 @@ export async function relatedNotes(
     for (const t of n.tags) tagCounts.set(t, (tagCounts.get(t) ?? 0) + 1);
   const total = vault.notes().length;
 
-  const sourceTitle = source.title.toLowerCase();
+  const sourceMention = mentionMatcher(source.title);
+  const sourceBody = source.body.normalize("NFC");
   for (const note of notes) {
     const noteOut = outgoing(note);
 
@@ -97,9 +112,13 @@ export async function relatedNotes(
       );
     }
 
-    // 4. Unlinked title mentions (candidate links).
-    if (sourceTitle.length >= 5 && note.body.toLowerCase().includes(sourceTitle)) {
+    // 4. Unlinked title mentions, either direction (candidate links). A
+    // mention that is already a link adds nothing beyond the link itself.
+    if (!noteOut.has(source.path) && sourceMention?.test(note.body.normalize("NFC"))) {
       bump(note.path, WEIGHTS.titleMention, "mentions this note's title");
+    }
+    if (!sourceOut.has(note.path) && mentionMatcher(note.title)?.test(sourceBody)) {
+      bump(note.path, WEIGHTS.titleMention, "mentioned in this note");
     }
   }
 

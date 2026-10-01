@@ -5,6 +5,7 @@ import path from "node:path";
 import { noteMatchesFilters } from "./search.js";
 import type { EmbeddingsConfig, Note, SearchOptions, SearchResult } from "./types.js";
 import type { Vault } from "./vault.js";
+import { atomicWriteFile, withNoteLock } from "./write.js";
 
 /**
  * Optional local semantic layer for hybrid search.
@@ -171,22 +172,51 @@ function meanVector(vectors: number[][]): number[] {
 
 const round = (x: number) => Math.round(x * 1e6) / 1e6;
 
+/** Lock key for the index file, in the same lock namespace as note writes. */
+const INDEX_LOCK_KEY = `${INDEX_DIR}/${INDEX_FILE}`;
+
+/**
+ * Tail of the in-flight `ensure` chain per index file. Concurrent searches in
+ * one process (stdio or HTTP MCP) run their embed passes one at a time, each
+ * starting from what the previous one saved instead of a stale snapshot.
+ */
+const ensureQueue = new Map<string, Promise<unknown>>();
+
+function serialized<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const run = (ensureQueue.get(key) ?? Promise.resolve()).then(fn, fn);
+  const tail = run.catch(() => undefined);
+  ensureQueue.set(key, tail);
+  void tail.then(() => {
+    if (ensureQueue.get(key) === tail) ensureQueue.delete(key);
+  });
+  return run;
+}
+
 /** The derived, rebuildable per-vault embedding index. */
 export class SemanticIndex {
   private data: IndexFileShape;
-  private file: string;
+  private readonly file: string;
+  private readonly vaultDir: string;
+  private readonly model: string;
 
   constructor(vaultDir: string, model: string) {
+    this.vaultDir = vaultDir;
+    this.model = model;
     this.file = path.join(vaultDir, INDEX_DIR, INDEX_FILE);
-    this.data = { version: 1, model, notes: {} };
-    if (fs.existsSync(this.file)) {
-      try {
-        const loaded = JSON.parse(fs.readFileSync(this.file, "utf8")) as IndexFileShape;
-        // A different model invalidates the whole index.
-        if (loaded.version === 1 && loaded.model === model) this.data = loaded;
-      } catch {
-        // Corrupt index: rebuild from scratch. It's derived data.
-      }
+    this.data = this.read();
+  }
+
+  /** Load the index from disk; missing, corrupt, or other-model files yield an empty index. */
+  private read(): IndexFileShape {
+    const empty: IndexFileShape = { version: 1, model: this.model, notes: {} };
+    if (!fs.existsSync(this.file)) return empty;
+    try {
+      const loaded = JSON.parse(fs.readFileSync(this.file, "utf8")) as IndexFileShape;
+      // A different model invalidates the whole index.
+      return loaded.version === 1 && loaded.model === this.model ? loaded : empty;
+    } catch {
+      // Corrupt index: rebuild from scratch. It's derived data.
+      return empty;
     }
   }
 
@@ -198,29 +228,66 @@ export class SemanticIndex {
   /**
    * Bring the index up to date: embed new/changed notes, drop deleted ones,
    * persist. Returns how many notes were (re)embedded.
+   *
+   * Safe under concurrency: passes are serialized within the process, and the
+   * save merges into whatever another process wrote meanwhile, so neither
+   * side's freshly embedded notes are lost.
    */
-  async ensure(notes: Note[], provider: EmbeddingProvider): Promise<number> {
-    const stale = this.stale(notes);
-    for (const note of stale) {
-      const chunks = chunkNote(note);
-      const vectors = (await provider.embed(chunks)).map((v) => v.map(round));
-      this.data.notes[note.path] = {
-        hash: sha1(note.raw),
-        chunks: vectors,
-        centroid: meanVector(vectors).map(round),
-      };
-    }
-    const alive = new Set(notes.map((n) => n.path));
-    for (const p of Object.keys(this.data.notes)) {
-      if (!alive.has(p)) delete this.data.notes[p];
-    }
-    if (stale.length > 0 || !fs.existsSync(this.file)) this.save();
-    return stale.length;
+  ensure(notes: Note[], provider: EmbeddingProvider): Promise<number> {
+    return serialized(this.file, async () => {
+      this.data = this.read();
+      const stale = this.stale(notes);
+      const embedded: Record<string, NoteVectors> = {};
+      for (const note of stale) {
+        const chunks = chunkNote(note);
+        const vectors = (await provider.embed(chunks)).map((v) => v.map(round));
+        embedded[note.path] = {
+          hash: sha1(note.raw),
+          chunks: vectors,
+          centroid: meanVector(vectors).map(round),
+        };
+      }
+      const hasDead = Object.keys(this.data.notes).some((p) => this.isDeleted(p));
+      if (stale.length > 0 || hasDead || !fs.existsSync(this.file)) this.save(embedded);
+      return stale.length;
+    });
   }
 
-  private save(): void {
+  /**
+   * Disk, not the caller's snapshot, decides deletion: a snapshot can predate
+   * a note's creation (dropping live vectors) or its removal (keeping dead ones).
+   */
+  private isDeleted(notePath: string): boolean {
+    return !fs.existsSync(path.join(this.vaultDir, notePath));
+  }
+
+  /** Hash of a note file's current contents, or undefined if it's gone. */
+  private currentHash(notePath: string): string | undefined {
+    try {
+      return sha1(fs.readFileSync(path.join(this.vaultDir, notePath), "utf8"));
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Merge this pass's vectors into the latest file under a lock, then replace it atomically. */
+  private save(embedded: Record<string, NoteVectors>): void {
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
-    fs.writeFileSync(this.file, JSON.stringify(this.data), "utf8");
+    withNoteLock(this.vaultDir, INDEX_LOCK_KEY, () => {
+      const latest = this.read();
+      for (const [p, vectors] of Object.entries(embedded)) {
+        // The note changed while this pass was embedding it: these vectors are
+        // already outdated, so keep whatever is newer (or let the next pass redo it).
+        if (this.currentHash(p) === vectors.hash) latest.notes[p] = vectors;
+      }
+      for (const p of Object.keys(latest.notes)) {
+        if (this.isDeleted(p)) delete latest.notes[p];
+      }
+      // Atomic rename: a concurrent reader never parses a half-written file
+      // (which it would treat as corrupt and rebuild from scratch).
+      atomicWriteFile(this.file, JSON.stringify(latest));
+      this.data = latest;
+    });
   }
 
   /** Rank note paths by max-chunk cosine similarity to a query vector. */

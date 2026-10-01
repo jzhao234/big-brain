@@ -108,6 +108,90 @@ describe("SemanticIndex", () => {
     expect(other.status().notes).toBe(0);
   });
 
+  it("keeps notes embedded by a concurrent pass in the same process", async () => {
+    vault.createNote({ title: "Early", body: "first note" });
+    const before = vault.notes(true); // a search that started before Late existed
+    vault.createNote({ title: "Late", body: "second note" });
+    const after = vault.notes(true);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const slow: EmbeddingProvider = {
+      id: fakeProvider.id,
+      async embed(texts) {
+        await gate;
+        return texts.map(embedText);
+      },
+    };
+
+    // Both instances load the same (empty) index; the older view finishes last.
+    const older = new SemanticIndex(dir, fakeProvider.id).ensure(before, slow);
+    const newer = new SemanticIndex(dir, fakeProvider.id).ensure(after, fakeProvider);
+    release();
+    await Promise.all([older, newer]);
+
+    const status = new SemanticIndex(dir, fakeProvider.id).status();
+    expect(status.notes).toBe(after.length);
+  });
+
+  it("merges with vectors another process saved mid-pass", async () => {
+    vault.createNote({ title: "Mine", body: "embedded here" });
+    const file = path.join(dir, ".bigbrain", "embeddings.json");
+    const foreign = {
+      hash: "x",
+      chunks: [embedText("other process")],
+      centroid: embedText("other process"),
+    };
+    const meddling: EmbeddingProvider = {
+      id: fakeProvider.id,
+      async embed(texts) {
+        // Simulate another process saving a note this pass doesn't know about.
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(
+          path.join(dir, "notes", "Theirs.md"),
+          "---\ntype: note\n---\n\nother process\n",
+        );
+        fs.writeFileSync(
+          file,
+          JSON.stringify({
+            version: 1,
+            model: fakeProvider.id,
+            notes: { "notes/Theirs.md": foreign },
+          }),
+        );
+        return texts.map(embedText);
+      },
+    };
+
+    await new SemanticIndex(dir, fakeProvider.id).ensure(vault.notes(true), meddling);
+    const saved = JSON.parse(fs.readFileSync(file, "utf8"));
+    expect(Object.keys(saved.notes)).toContain("notes/Theirs.md");
+    expect(Object.keys(saved.notes)).toContain("notes/Mine.md");
+  });
+
+  it("drops vectors for a note that changed or vanished mid-pass", async () => {
+    const edited = vault.createNote({ title: "Edited", body: "version one" });
+    const removed = vault.createNote({ title: "Removed", body: "short lived" });
+    const notes = vault.notes(true);
+    const racing: EmbeddingProvider = {
+      id: fakeProvider.id,
+      async embed(texts) {
+        // Another writer edits one note and deletes another while we embed.
+        fs.appendFileSync(edited.absPath, "version two\n");
+        fs.rmSync(removed.absPath, { force: true });
+        return texts.map(embedText);
+      },
+    };
+
+    await new SemanticIndex(dir, fakeProvider.id).ensure(notes, racing);
+    const saved = JSON.parse(
+      fs.readFileSync(path.join(dir, ".bigbrain", "embeddings.json"), "utf8"),
+    );
+    expect(Object.keys(saved.notes)).not.toContain(edited.path); // re-embedded next pass
+    expect(Object.keys(saved.notes)).not.toContain(removed.path);
+  });
+
   it("query ranks semantically (trigram) similar notes first", async () => {
     vault.createNote({ title: "Networking", body: "kubernetes cluster networking pods services" });
     vault.createNote({ title: "Baking", body: "sourdough bread hydration starter levain" });
@@ -168,6 +252,33 @@ describe("relatedNotes", () => {
     expect(beta.reasons.join(" ")).toMatch(/shared link/);
     expect(beta.reasons.join(" ")).toMatch(/rare-tag/);
     expect(beta.reasons.join(" ")).toMatch(/mentions/);
+  });
+
+  it("finds title mentions in both directions, as whole phrases, without double-counting links", async () => {
+    vault.createNote({
+      title: "Source",
+      body: "We should revisit Kafka Migration soon. Shipping v2.",
+    });
+    vault.createNote({ title: "Kafka Migration", body: "plan" });
+    vault.createNote({ title: "Shipp", body: "unrelated" }); // only a substring of "Shipping"
+    vault.createNote({ title: "Linked Note", body: "x" });
+    vault.createNote({ title: "Linker", body: "See [[Source]]; Source is great." });
+
+    const related = await relatedNotes(vault, "Source");
+    const kafka = related.find((r) => r.title === "Kafka Migration");
+    expect(kafka?.reasons).toContain("mentioned in this note");
+    expect(related.some((r) => r.title === "Shipp")).toBe(false);
+
+    vault.createNote({ title: "Caf\u00e9 Noir", body: "x" });
+    vault.appendToNote("Source", "Dinner at Cafe\u0301 Noir."); // decomposed accent
+    const again = await relatedNotes(vault, "Source");
+    expect(again.find((r) => r.title === "Caf\u00e9 Noir")?.reasons).toContain(
+      "mentioned in this note",
+    );
+
+    const linker = related.find((r) => r.title === "Linker")!;
+    expect(linker.reasons).toContain("links here");
+    expect(linker.reasons).not.toContain("mentions this note's title");
   });
 
   it("adds semantic neighbors when embeddings are on", async () => {
