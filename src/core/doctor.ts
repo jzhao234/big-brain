@@ -62,7 +62,7 @@ export function runDoctor(vault: Vault): DoctorFinding[] {
   const today = todayISO();
   for (const note of active) {
     for (const t of note.tasks) {
-      if (!t.done && t.due !== undefined && t.due < today) {
+      if (!t.done && !t.cancelled && t.due !== undefined && t.due < today) {
         findings.push({
           severity: "warning",
           rule: "overdue-task",

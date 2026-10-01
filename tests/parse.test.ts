@@ -111,3 +111,40 @@ describe("parseNote", () => {
     ]);
   });
 });
+
+describe("extractTasks edge cases", () => {
+  it("only closes a fence with the same marker, so code-sample checkboxes stay hidden", () => {
+    const raw = [
+      "~~~",
+      "```",
+      "~~~example",
+      "- [ ] inside tilde fence",
+      "~~~",
+      "- [ ] real task",
+    ].join("\n");
+    const tasks = extractTasks(raw, "a.md", "A", "note");
+    expect(tasks.map((t) => t.text)).toEqual(["real task"]);
+  });
+
+  it("does not open a fence on backticks with a backtick in the info string", () => {
+    const tasks = extractTasks("```a`b\n- [ ] real task", "a.md", "A", "note");
+    expect(tasks.map((t) => t.text)).toEqual(["real task"]);
+  });
+
+  it("marks [-] tasks as cancelled, not done", () => {
+    const [task] = extractTasks("- [-] dropped idea", "a.md", "A", "note");
+    expect(task).toMatchObject({ done: false, cancelled: true });
+  });
+});
+
+describe("frontmatter dates", () => {
+  it("keeps unquoted YAML dates as the strings the user wrote", () => {
+    const note = parse("notes/a.md", "---\ncreated: 2026-01-05\n---\n\nbody\n");
+    expect(note.frontmatter.created).toBe("2026-01-05");
+  });
+
+  it("still resolves YAML merge keys", () => {
+    const raw = "---\nbase: &base\n  status: active\n<<: *base\n---\n\nbody\n";
+    expect(parse("notes/a.md", raw).frontmatter.status).toBe("active");
+  });
+});

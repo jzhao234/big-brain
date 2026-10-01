@@ -1,5 +1,5 @@
 import path from "node:path";
-import matter from "gray-matter";
+import { parseFrontmatter } from "./frontmatter.js";
 import type { Heading, Note, NoteLink, TaskItem } from "./types.js";
 import {
   asStringArray,
@@ -14,6 +14,9 @@ import {
 const WIKILINK_RE = /\[\[([^\]|#\n]+)(?:#([^\]|\n]+))?(?:\|([^\]\n]+))?\]\]/g;
 const TAG_RE = /(^|[\s(])#([A-Za-z][\w/-]*)/g;
 const HEADING_RE = /^(#{1,6})\s+(.*)$/;
+// A backtick fence's info string may not contain backticks (CommonMark).
+const FENCE_OPEN_RE = /^\s{0,3}(`{3,}(?=[^`]*$)|~{3,})/;
+const FENCE_CLOSE_RE = /^\s{0,3}(`{3,}|~{3,})\s*$/;
 const TASK_RE = /^\s*[-*] \[([ xX/\-])\]\s+(.*)$/;
 
 const DUE_RE = /📅\s*(\d{4}-\d{2}-\d{2})/u;
@@ -74,13 +77,21 @@ export function extractTasks(
   const tasks: TaskItem[] = [];
   const seen = new Map<string, number>();
   const lines = raw.split("\n");
-  let inFence = false;
+  // Open fence marker (e.g. "```ts" or "~~~~"). Per CommonMark, only a bare run
+  // of the same character, at least as long, closes it.
+  let fence: string | undefined;
   lines.forEach((line, i) => {
-    if (/^\s*(```|~~~)/.test(line)) {
-      inFence = !inFence;
+    if (fence === undefined) {
+      const open = FENCE_OPEN_RE.exec(line);
+      if (open) {
+        fence = open[1]!;
+        return;
+      }
+    } else {
+      const close = FENCE_CLOSE_RE.exec(line)?.[1];
+      if (close && close[0] === fence[0] && close.length >= fence.length) fence = undefined;
       return;
     }
-    if (inFence) return;
     const m = TASK_RE.exec(line);
     if (!m) return;
     const status = m[1]!;
@@ -99,6 +110,7 @@ export function extractTasks(
       text,
       raw: line,
       done: status.toLowerCase() === "x",
+      cancelled: status === "-",
       file,
       line: i,
       due: DUE_RE.exec(rest)?.[1],
@@ -139,8 +151,8 @@ export function parseNote(input: ParseInput): Note {
   let fm: Record<string, unknown> = {};
   let body = raw;
   try {
-    const parsed = matter(raw);
-    fm = parsed.data ?? {};
+    const parsed = parseFrontmatter(raw);
+    fm = parsed.data;
     body = parsed.content;
   } catch {
     // Malformed frontmatter: treat the whole file as body rather than crashing the vault.

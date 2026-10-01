@@ -1,5 +1,5 @@
 import type { Note } from "./types.js";
-import { nowStamp, todayISO } from "./util.js";
+import { isCalendarDate, nowStamp, todayISO } from "./util.js";
 import type { Vault } from "./vault.js";
 
 const DAILY_TEMPLATE = `## Focus
@@ -19,7 +19,7 @@ export function renderTemplate(tpl: string, vars: Record<string, string>): strin
 /** Get (or create) the daily note for a date (default today). */
 export function getDailyNote(vault: Vault, date?: string): Note {
   const day = date ?? todayISO();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+  if (!isCalendarDate(day)) {
     throw new Error(`Invalid date (want YYYY-MM-DD): ${date}`);
   }
   const rel = `${vault.config.folders.daily}/${day}.md`;

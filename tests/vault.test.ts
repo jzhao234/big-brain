@@ -162,6 +162,42 @@ describe("Vault notes", () => {
   });
 });
 
+describe("write safety", () => {
+  it("refuses folders that escape the vault", () => {
+    for (const folder of ["../outside", "notes/../../outside", "/tmp/outside"]) {
+      expect(() => vault.createNote({ title: "Escape", folder })).toThrow(/vault/);
+    }
+    expect(fs.existsSync(path.join(dir, "..", "outside"))).toBe(false);
+  });
+
+  it("adds a numeric suffix on collision when unique is set", () => {
+    const first = vault.createNote({ title: "Same", folder: "inbox", unique: true });
+    const second = vault.createNote({ title: "Same", folder: "inbox", unique: true });
+    expect(first.path).toBe("inbox/Same.md");
+    expect(second.path).toBe("inbox/Same 2.md");
+    expect(() => vault.createNote({ title: "Same", folder: "inbox" })).toThrow(/already exists/);
+  });
+
+  it("preserves hand-written dates through a frontmatter update", () => {
+    const file = path.join(dir, "notes", "Dated.md");
+    fs.writeFileSync(file, "---\ncreated: 2026-01-05\n---\n\nbody\n");
+    vault.refresh();
+    vault.updateFrontmatter("Dated", { status: "active" });
+    const raw = fs.readFileSync(file, "utf8");
+    expect(raw).toContain("created: 2026-01-05\n");
+    expect(raw).not.toContain("T00:00:00");
+  });
+
+  it("sees an external edit even when the mtime is preserved", () => {
+    const note = vault.createNote({ title: "Synced", body: "old" });
+    const before = fs.statSync(note.absPath);
+    fs.writeFileSync(note.absPath, "---\ntype: note\n---\n\nnew content here\n");
+    fs.utimesSync(note.absPath, before.atime, before.mtime);
+    vault.refresh();
+    expect(vault.get("Synced")?.body).toContain("new content here");
+  });
+});
+
 describe("projects and tasks", () => {
   it("full project lifecycle with tasks", () => {
     createProject(vault, { title: "Ship v1", goal: "Launch", area: "work" });
@@ -201,6 +237,20 @@ describe("projects and tasks", () => {
     addTask(vault, { text: "whenever", note: "Q" });
     const due = listTasks(vault, { dueBy: "2026-02-01" });
     expect(due.map((t) => t.text)).toEqual(["soon"]);
+  });
+
+  it("rejects multiline task text and impossible due dates", () => {
+    createProject(vault, { title: "R" });
+    expect(() => addTask(vault, { text: "one\n- [ ] two", note: "R" })).toThrow(/single line/);
+    expect(() => addTask(vault, { text: "x", note: "R", due: "2026-02-30" })).toThrow(/due date/);
+    expect(listTasks(vault, { project: "R" })).toHaveLength(0);
+  });
+
+  it("keeps cancelled tasks out of the open list", () => {
+    createProject(vault, { title: "S" });
+    vault.appendToNote("S", "- [-] abandoned\n- [ ] still open", "Tasks");
+    expect(listTasks(vault, { project: "S" }).map((t) => t.text)).toEqual(["still open"]);
+    expect(listTasks(vault, { project: "S", status: "all" })).toHaveLength(2);
   });
 });
 

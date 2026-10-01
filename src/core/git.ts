@@ -1,11 +1,16 @@
 import { execFileSync } from "node:child_process";
 import type { GitConfig } from "./types.js";
 
-function git(vaultDir: string, args: string[]): string {
+const LOCAL_GIT_TIMEOUT_MS = 10_000;
+const PUSH_TIMEOUT_MS = 30_000;
+
+function git(vaultDir: string, args: string[], timeout = LOCAL_GIT_TIMEOUT_MS): string {
   return execFileSync("git", args, {
     cwd: vaultDir,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    timeout,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
   });
 }
 
@@ -65,7 +70,7 @@ export function autoCommit(
 
     if (cfg.autoPush) {
       try {
-        git(vaultDir, ["push", "-q"]);
+        git(vaultDir, ["push", "-q"], PUSH_TIMEOUT_MS);
       } catch (err) {
         // Offline / no upstream / rejected: the commit is safe locally; sync later.
         warn(`auto-push failed (commit kept locally): ${errText(err)}`);

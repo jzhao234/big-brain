@@ -39,6 +39,7 @@ function taskRow(t: {
   id: string;
   text: string;
   done: boolean;
+  cancelled: boolean;
   due?: string;
   priority?: string;
   noteTitle: string;
@@ -48,6 +49,7 @@ function taskRow(t: {
     id: t.id,
     text: t.text,
     done: t.done,
+    cancelled: t.cancelled,
     due: t.due,
     priority: t.priority,
     note: t.noteTitle,
@@ -252,6 +254,7 @@ export function buildServer(vault: Vault): McpServer {
           type: "inbox",
           folder: vault.config.folders.inbox,
           body,
+          unique: true,
         });
         return text(`Captured to ${note.path}`);
       }),

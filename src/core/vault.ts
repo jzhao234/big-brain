@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import fg from "fast-glob";
-import matter from "gray-matter";
 import { folderTypeMap, loadConfig } from "./config.js";
+import { stringifyNote } from "./frontmatter.js";
 import { autoCommit } from "./git.js";
 import { parseNote } from "./parse.js";
 import { SearchIndex } from "./search.js";
@@ -21,12 +21,20 @@ export interface CreateNoteInput {
   frontmatter?: Record<string, unknown>;
   /** Overwrite if a note with this path already exists (default false). */
   overwrite?: boolean;
+  /**
+   * On a filename collision, add a numeric suffix (`Title 2.md`) instead of
+   * failing. Ignored when `overwrite` is set. Used by capture, which must
+   * never lose a thought to a duplicate title.
+   */
+  unique?: boolean;
 }
 
 export class Vault {
   readonly dir: string;
   readonly config: BrainConfig;
   private notesByPath = new Map<string, Note>();
+  /** Per-path stat signature used to decide whether a file needs reparsing. */
+  private signatures = new Map<string, string>();
   private index = new SearchIndex();
   private folderTypes: Record<string, string>;
 
@@ -37,7 +45,7 @@ export class Vault {
     this.refresh();
   }
 
-  /** Rescan the vault, reparsing only files whose mtime changed. */
+  /** Rescan the vault, reparsing only files whose stat signature changed. */
   refresh(): void {
     const files = fg.sync("**/*.md", {
       cwd: this.dir,
@@ -56,14 +64,16 @@ export class Vault {
       const posix = toPosix(rel);
       seen.add(posix);
       const abs = path.join(this.dir, rel);
-      let mtimeMs: number;
+      let stat: fs.Stats;
       try {
-        mtimeMs = fs.statSync(abs).mtimeMs;
+        stat = fs.statSync(abs);
       } catch {
         continue; // deleted between glob and stat
       }
-      const existing = this.notesByPath.get(posix);
-      if (existing && existing.mtimeMs === mtimeMs) continue;
+      // mtime alone misses edits from tools that preserve it (rsync -t, some
+      // sync clients); ctime can't be set from userland and size is free.
+      const signature = `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}`;
+      if (this.notesByPath.has(posix) && this.signatures.get(posix) === signature) continue;
       const raw = fs.readFileSync(abs, "utf8");
       this.notesByPath.set(
         posix,
@@ -71,14 +81,18 @@ export class Vault {
           relPath: posix,
           absPath: abs,
           raw,
-          mtimeMs,
+          mtimeMs: stat.mtimeMs,
           folderTypes: this.folderTypes,
           archiveFolder: this.config.folders.archive,
         }),
       );
+      this.signatures.set(posix, signature);
     }
     for (const p of [...this.notesByPath.keys()]) {
-      if (!seen.has(p)) this.notesByPath.delete(p);
+      if (!seen.has(p)) {
+        this.notesByPath.delete(p);
+        this.signatures.delete(p);
+      }
     }
     this.index.sync(this.notesByPath);
   }
@@ -166,12 +180,12 @@ export class Vault {
 
   createNote(input: CreateNoteInput): Note {
     const type = input.type ?? "note";
-    const folder = input.folder
-      ? toPosix(input.folder).replace(/^\/+|\/+$/g, "")
-      : this.folderForType(type);
-    const filename = `${safeFilename(input.title)}.md`;
-    const rel = folder === "" ? filename : `${folder}/${filename}`;
-    const abs = path.join(this.dir, rel);
+    // Validate configured defaults too: brain.config.json is user-editable.
+    const folder = this.vaultFolder(input.folder ?? this.folderForType(type));
+    const stem = safeFilename(input.title);
+    if (stem === "" || /^\.+$/.test(stem)) {
+      throw new Error(`Note title has no usable filename characters: ${input.title}`);
+    }
     const fm: Record<string, unknown> = {
       type,
       created: todayISO(),
@@ -179,16 +193,24 @@ export class Vault {
       ...(input.frontmatter ?? {}),
     };
     const body = input.body ?? "";
-    const content = matter.stringify(body === "" ? "" : `\n${body.replace(/^\n+/, "")}`, fm);
-    const note = withNoteLock(this.dir, rel, () => {
-      if (fs.existsSync(abs) && !input.overwrite) {
-        throw new Error(`Note already exists: ${rel} (pass overwrite to replace it)`);
-      }
-      atomicWriteFile(abs, content);
-      const created = this.reloadPath(rel);
-      if (!created) throw new Error(`Failed to read back created note: ${rel}`);
-      return created;
-    });
+    const content = stringifyNote(body === "" ? "" : `\n${body.replace(/^\n+/, "")}`, fm);
+    const unique = input.unique === true && input.overwrite !== true;
+    let note: Note | undefined;
+    for (let n = 1; note === undefined; n++) {
+      const filename = n === 1 ? `${stem}.md` : `${stem} ${n}.md`;
+      const rel = folder === "" ? filename : `${folder}/${filename}`;
+      const abs = path.join(this.dir, rel);
+      note = withNoteLock(this.dir, rel, () => {
+        if (fs.existsSync(abs) && !input.overwrite) {
+          if (unique) return undefined;
+          throw new Error(`Note already exists: ${rel} (pass overwrite to replace it)`);
+        }
+        atomicWriteFile(abs, content);
+        const created = this.reloadPath(rel);
+        if (!created) throw new Error(`Failed to read back created note: ${rel}`);
+        return created;
+      });
+    }
     this.commit(`big-brain: create ${note.path}`, [note.path]);
     return note;
   }
@@ -261,14 +283,14 @@ export class Vault {
         if (v === null) delete fm[k];
         else fm[k] = v;
       }
-      return matter.stringify(note.body, fm);
+      return stringifyNote(note.body, fm);
     });
   }
 
   /** Replace a note's body (frontmatter preserved). */
   replaceBody(ref: string, body: string): Note {
     return this.mutateNote(ref, "rewrite", (note) =>
-      matter.stringify(`\n${body.replace(/^\n+/, "")}`, note.frontmatter),
+      stringifyNote(`\n${body.replace(/^\n+/, "")}`, note.frontmatter),
     );
   }
 
@@ -316,10 +338,27 @@ export class Vault {
     return fs.existsSync(file) ? fs.readFileSync(file, "utf8") : undefined;
   }
 
+  /**
+   * Normalize a caller-supplied folder to a vault-relative posix path, refusing
+   * anything that could resolve outside the vault (absolute paths, `..`).
+   */
+  private vaultFolder(folder: string): string {
+    const posix = toPosix(folder.trim());
+    if (path.isAbsolute(posix) || /^[A-Za-z]:/.test(posix)) {
+      throw new Error(`Folder must be relative to the vault: ${folder}`);
+    }
+    const segments = posix.split("/").filter((s) => s !== "" && s !== ".");
+    if (segments.includes("..")) {
+      throw new Error(`Folder must stay inside the vault: ${folder}`);
+    }
+    return segments.join("/");
+  }
+
   /** Force one path to be reparsed even on filesystems with coarse mtimes. */
   private reloadPath(rel: string): Note | undefined {
     const posix = toPosix(rel);
     this.notesByPath.delete(posix);
+    this.signatures.delete(posix);
     this.refresh();
     return this.notesByPath.get(posix);
   }

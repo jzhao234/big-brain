@@ -30,7 +30,7 @@ export function projectStatus(note: Note): ProjectStatus {
 }
 
 export function summarizeProject(note: Note): ProjectSummary {
-  const open = note.tasks.filter((t) => !t.done).sort(compareTasks);
+  const open = note.tasks.filter((t) => !t.done && !t.cancelled).sort(compareTasks);
   return {
     path: note.path,
     title: note.title,

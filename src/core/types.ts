@@ -28,6 +28,8 @@ export interface TaskItem {
   /** The full original line. */
   raw: string;
   done: boolean;
+  /** `- [-]` (Obsidian Tasks "cancelled"): neither open nor done. */
+  cancelled: boolean;
   /** Vault-relative posix path of the containing file. */
   file: string;
   /** 0-based line index in the file (including frontmatter lines). */

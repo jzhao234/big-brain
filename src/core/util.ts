@@ -17,6 +17,17 @@ export function todayISO(now: Date = new Date()): string {
   return `${y}-${m}-${d}`;
 }
 
+/** True for a YYYY-MM-DD string naming a real calendar day (rejects 2026-02-30). */
+export function isCalendarDate(s: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return false;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const date = new Date(0);
+  // setUTCFullYear, unlike Date.UTC, doesn't remap years 0–99 to 1900–1999.
+  date.setUTCFullYear(y, mo - 1, d);
+  return date.getUTCFullYear() === y && date.getUTCMonth() === mo - 1 && date.getUTCDate() === d;
+}
+
 /** Local timestamp as YYYY-MM-DD HH:mm. */
 export function nowStamp(now: Date = new Date()): string {
   const hh = String(now.getHours()).padStart(2, "0");

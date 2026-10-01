@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { autoCommit } from "../src/core/git.js";
 import { initVault } from "../src/core/scaffold.js";
 import { addTask, completeTask } from "../src/core/tasks.js";
@@ -22,13 +22,13 @@ function commitCount(): number {
   }
 }
 
-function writeConfig(autoCommit: boolean): void {
+function writeConfig(autoCommit: boolean, autoPush = false): void {
   fs.writeFileSync(
     path.join(dir, "brain.config.json"),
     JSON.stringify(
       {
         name: "Git Test",
-        git: { autoCommit, autoPush: false, authorName: "Test", authorEmail: "t@example.com" },
+        git: { autoCommit, autoPush, authorName: "Test", authorEmail: "t@example.com" },
       },
       null,
       2,
@@ -36,8 +36,8 @@ function writeConfig(autoCommit: boolean): void {
   );
 }
 
-function enableAutoCommit(): void {
-  writeConfig(true);
+function enableAutoCommit(autoPush = false): void {
+  writeConfig(true, autoPush);
   git(["add", "brain.config.json"]);
   git([
     "-c",
@@ -171,6 +171,26 @@ describe("auto-commit", () => {
     completeTask(vault, "do the thing");
     expect(commitCount()).toBe(before + 1);
     expect(git(["log", "-1", "--pretty=%s"]).trim()).toMatch(/^big-brain: complete task/);
+  });
+
+  it("logs a failed push and keeps the successful local commit", () => {
+    enableAutoCommit(true);
+    git(["remote", "add", "origin", path.join(dir, "missing-remote.git")]);
+    const vault = new Vault(dir);
+    const before = commitCount();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      expect(() =>
+        vault.createNote({ title: "Push Failure", body: "saved locally" }),
+      ).not.toThrow();
+      expect(commitCount()).toBe(before + 1);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("auto-push failed (commit kept locally)"),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it("does nothing when disabled — leaves changes uncommitted", () => {

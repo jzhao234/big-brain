@@ -1,6 +1,6 @@
 import { getDailyNote } from "./daily.js";
 import type { TaskItem, TaskPriority } from "./types.js";
-import { todayISO } from "./util.js";
+import { isCalendarDate, todayISO } from "./util.js";
 import type { Vault } from "./vault.js";
 
 export interface TaskFilter {
@@ -27,7 +27,7 @@ export function listTasks(vault: Vault, filter: TaskFilter = {}): TaskItem[] {
   for (const note of vault.notes(filter.includeArchived ?? false)) {
     if (projectPath && note.path !== projectPath) continue;
     for (const t of note.tasks) {
-      if (status === "open" && t.done) continue;
+      if (status === "open" && (t.done || t.cancelled)) continue;
       if (status === "done" && !t.done) continue;
       if (tag && !t.tags.includes(tag)) continue;
       if (filter.dueBy && (!t.due || t.due > filter.dueBy)) continue;
@@ -58,11 +58,15 @@ export interface AddTaskInput {
 }
 
 export function formatTaskLine(input: AddTaskInput): string {
-  let line = `- [ ] ${input.text.trim()}`;
+  const text = input.text.trim();
+  if (text === "") throw new Error("Task text is empty");
+  // A newline would smuggle extra lines (or extra tasks) into the note.
+  if (/[\r\n]/.test(text)) throw new Error("Task text must be a single line");
+  let line = `- [ ] ${text}`;
   if (input.priority === "high") line += " ⏫";
   if (input.priority === "low") line += " 🔽";
   if (input.due) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.due)) {
+    if (!isCalendarDate(input.due)) {
       throw new Error(`Invalid due date (want YYYY-MM-DD): ${input.due}`);
     }
     line += ` 📅 ${input.due}`;

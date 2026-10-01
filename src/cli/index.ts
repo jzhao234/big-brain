@@ -15,6 +15,7 @@ import { initVault } from "../core/scaffold.js";
 import { defaultClaudeSkillsDir, installSkills } from "../core/skills.js";
 import { addTask, completeTask, listTasks } from "../core/tasks.js";
 import type { TaskItem } from "../core/types.js";
+import { todayISO } from "../core/util.js";
 import { Vault } from "../core/vault.js";
 
 const program = new Command();
@@ -39,7 +40,7 @@ function fail(err: unknown): never {
 }
 
 function taskLine(t: TaskItem): string {
-  const box = t.done ? pc.green("[x]") : "[ ]";
+  const box = t.done ? pc.green("[x]") : t.cancelled ? pc.dim("[-]") : "[ ]";
   const due = t.due ? pc.yellow(` 📅 ${t.due}`) : "";
   const prio = t.priority === "high" ? pc.red(" ⏫") : t.priority === "low" ? " 🔽" : "";
   return `${pc.dim(t.id)} ${box} ${t.text}${prio}${due} ${pc.dim(`(${t.noteTitle})`)}`;
@@ -221,10 +222,11 @@ program
       const vault = openVault();
       const body = words.join(" ");
       const note = vault.createNote({
-        title: `${new Date().toISOString().slice(0, 10)} ${body.slice(0, 60)}`,
+        title: `${todayISO()} ${body.slice(0, 60)}`,
         type: "inbox",
         folder: vault.config.folders.inbox,
         body,
+        unique: true,
       });
       console.log(pc.green(`Captured to ${note.path}`));
     } catch (err) {
