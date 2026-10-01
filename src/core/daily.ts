@@ -27,12 +27,20 @@ export function getDailyNote(vault: Vault, date?: string): Note {
   if (existing) return existing;
   const tpl = vault.template("daily");
   const body = tpl ? renderTemplate(tpl, { date: day, title: day }) : DAILY_TEMPLATE;
-  return vault.createNote({
-    title: day,
-    type: "daily",
-    folder: vault.config.folders.daily,
-    body,
-  });
+  try {
+    return vault.createNote({
+      title: day,
+      type: "daily",
+      folder: vault.config.folders.daily,
+      body,
+    });
+  } catch (error) {
+    // Another process may have created this day's note after our initial read.
+    vault.refresh();
+    const raced = vault.get(rel);
+    if (raced) return raced;
+    throw error;
+  }
 }
 
 /** Append a timestamped entry to today's Log section. */

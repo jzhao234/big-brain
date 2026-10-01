@@ -36,7 +36,8 @@ function toDoc(note: Note): Doc {
 /** Incremental full-text index over the vault's notes. */
 export class SearchIndex {
   private mini: MiniSearch<Doc>;
-  private indexed = new Map<string, number>(); // path -> mtimeMs
+  /** path -> the Note object last indexed; Vault replaces the object whenever it reparses. */
+  private indexed = new Map<string, Note>();
 
   constructor() {
     this.mini = new MiniSearch<Doc>({
@@ -54,10 +55,10 @@ export class SearchIndex {
   sync(notes: Map<string, Note>): void {
     for (const [p, note] of notes) {
       const prev = this.indexed.get(p);
-      if (prev === note.mtimeMs) continue;
+      if (prev === note) continue;
       if (prev !== undefined && this.mini.has(p)) this.mini.discard(p);
       this.mini.add(toDoc(note));
-      this.indexed.set(p, note.mtimeMs);
+      this.indexed.set(p, note);
     }
     for (const p of [...this.indexed.keys()]) {
       if (!notes.has(p)) {

@@ -7,6 +7,7 @@ import {
   nameKey,
   shortHash,
   stripCode,
+  toLF,
   toPosix,
   uniq,
 } from "./util.js";
@@ -149,16 +150,20 @@ export interface ParseInput {
 
 export function parseNote(input: ParseInput): Note {
   const { relPath, absPath, raw, mtimeMs, folderTypes, archiveFolder } = input;
+  // Parse an LF view so CRLF files (Windows editors, git autocrlf) yield the
+  // same tasks and headings. Only \r\n is folded, so line indices still match
+  // raw.split("\n"); `raw` itself stays byte-for-byte what is on disk.
+  const text = toLF(raw);
   let fm: Record<string, unknown> = {};
-  let body = raw;
+  let body = text;
   try {
-    const parsed = parseFrontmatter(raw);
+    const parsed = parseFrontmatter(text);
     fm = parsed.data;
     body = parsed.content;
   } catch {
     // Malformed frontmatter: treat the whole file as body rather than crashing the vault.
     fm = {};
-    body = raw;
+    body = text;
   }
 
   const stem = path.basename(relPath, ".md");
@@ -180,7 +185,7 @@ export function parseNote(input: ParseInput): Note {
     tags,
     aliases: asStringArray(fm.aliases),
     links: extractLinks(body),
-    tasks: extractTasks(raw, posixPath, title, type),
+    tasks: extractTasks(text, posixPath, title, type),
     headings,
     body,
     raw,

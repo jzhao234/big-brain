@@ -5,8 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getDailyNote, logToDaily } from "../src/core/daily.js";
 import { runDoctor } from "../src/core/doctor.js";
 import { vaultOverview } from "../src/core/overview.js";
+import { parseNote } from "../src/core/parse.js";
 import { createProject, listProjects, setProjectStatus } from "../src/core/projects.js";
 import { initVault } from "../src/core/scaffold.js";
+import { SearchIndex } from "../src/core/search.js";
 import { addTask, completeTask, listTasks, updateTask } from "../src/core/tasks.js";
 import { todayISO } from "../src/core/util.js";
 import { Vault } from "../src/core/vault.js";
@@ -195,6 +197,65 @@ describe("write safety", () => {
     fs.utimesSync(note.absPath, before.atime, before.mtime);
     vault.refresh();
     expect(vault.get("Synced")?.body).toContain("new content here");
+  });
+});
+
+describe("CRLF and lookups", () => {
+  it("edits CRLF notes in place and keeps their line endings", () => {
+    const file = path.join(dir, "projects", "Win.md");
+    fs.writeFileSync(
+      file,
+      "---\r\ntype: project\r\nstatus: active\r\n---\r\n\r\n## Tasks\r\n\r\n- [ ] ship\r\n\r\n## Log\r\n",
+    );
+    vault.refresh();
+    addTask(vault, { text: "test", note: "Win" });
+    completeTask(vault, "ship");
+    vault.appendToNote("Win", "- did a thing", "Log");
+    const raw = fs.readFileSync(file, "utf8");
+    expect(raw.replace(/\r\n/g, "")).not.toContain("\n"); // every newline is still CRLF
+    expect(raw).toMatch(/## Tasks\r\n\r\n- \[x\] ship ✅ \d{4}-\d{2}-\d{2}\r\n- \[ \] test\r\n/);
+    expect(raw.match(/## Log/g)).toHaveLength(1); // appended under the existing heading
+  });
+
+  it("writes a mostly-LF note with one stray CRLF back as LF", () => {
+    const file = path.join(dir, "projects", "Mixed.md");
+    fs.writeFileSync(file, "---\ntype: project\n---\n\n## Tasks\r\n\n- [ ] one\n- [ ] two\n");
+    vault.refresh();
+    completeTask(vault, "one");
+    expect(fs.readFileSync(file, "utf8")).not.toContain("\r\n- [");
+  });
+
+  it("resolves names after creates, renames, and archives", () => {
+    vault.createNote({ title: "Lookup Target", frontmatter: { aliases: ["LT"] } });
+    expect(vault.get("lt")?.path).toBe("notes/Lookup Target.md");
+    vault.updateFrontmatter("Lookup Target", { aliases: ["Renamed Alias"] });
+    expect(vault.get("LT")).toBeUndefined();
+    expect(vault.get("renamed alias")?.path).toBe("notes/Lookup Target.md");
+    vault.archiveNote("Lookup Target");
+    expect(vault.get("Lookup Target")?.archived).toBe(true);
+    vault.createNote({ title: "Lookup Target" });
+    expect(vault.get("Lookup Target")?.archived).toBe(false); // live note wins
+  });
+
+  it("re-indexes search when a note is reparsed without an mtime change", () => {
+    // Vault reparses on ctime/size changes too; the search index must follow
+    // the parsed note, not its mtime.
+    const parseAt = (body: string) =>
+      parseNote({
+        relPath: "notes/S.md",
+        absPath: path.join(dir, "notes", "S.md"),
+        raw: `---\ntype: note\n---\n\n${body}\n`,
+        mtimeMs: 1000,
+        folderTypes: {},
+        archiveFolder: "archive",
+      });
+    const index = new SearchIndex();
+    const before = new Map([["notes/S.md", parseAt("alpha")]]);
+    index.sync(before);
+    const after = new Map([["notes/S.md", parseAt("zebracorn appears")]]);
+    index.sync(after);
+    expect(index.search("zebracorn", after).map((r) => r.path)).toEqual(["notes/S.md"]);
+    expect(index.search("alpha", after)).toHaveLength(0);
   });
 });
 

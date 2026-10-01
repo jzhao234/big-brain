@@ -2,11 +2,13 @@ import { createHash } from "node:crypto";
 
 /** Sanitize a title into a safe filename, Obsidian-style (keeps spaces and case). */
 export function safeFilename(title: string): string {
-  return title
+  const filename = title
     .replace(/[\\/:*?"<>|#^[\]]/g, "")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 120);
+  const last = filename.charCodeAt(filename.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? filename.slice(0, -1) : filename;
 }
 
 /** Local date as YYYY-MM-DD. */
@@ -37,6 +39,11 @@ export function nowStamp(now: Date = new Date()): string {
 
 export function shortHash(input: string): string {
   return createHash("sha1").update(input).digest("hex").slice(0, 8);
+}
+
+/** Fold CRLF line endings to LF (lone CRs are left alone, so line counts are preserved). */
+export function toLF(s: string): string {
+  return s.replace(/\r\n/g, "\n");
 }
 
 /** Normalize a path to posix separators. */

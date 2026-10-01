@@ -8,11 +8,17 @@ export function runDoctor(vault: Vault): DoctorFinding[] {
   const findings: DoctorFinding[] = [];
   const notes = vault.notes(true);
   const active = notes.filter((n) => !n.archived);
+  const activePaths = new Set(active.map((n) => n.path));
 
-  // Broken wikilinks.
-  for (const note of active) {
+  // Resolve links once and build inbound edges in one pass. Backlinks-per-note
+  // repeatedly scans the vault and becomes cubic when name resolution is linear.
+  const incoming = new Set<string>();
+  for (const note of notes) {
     for (const link of note.links) {
-      if (!vault.resolveLink(link)) {
+      const target = vault.resolveLink(link);
+      if (target) {
+        if (target.path !== note.path) incoming.add(target.path);
+      } else if (activePaths.has(note.path) && !isAttachmentTarget(link.target)) {
         findings.push({
           severity: "warning",
           rule: "broken-link",
@@ -90,7 +96,7 @@ export function runDoctor(vault: Vault): DoctorFinding[] {
     if (note.type === "daily" || note.type === "inbox") continue;
     if (!note.path.includes("/")) continue; // root-level meta files (BRAIN.md, CLAUDE.md)
     const hasOutgoing = note.links.length > 0;
-    const hasIncoming = vault.backlinks(note.path).length > 0;
+    const hasIncoming = incoming.has(note.path);
     if (!hasOutgoing && !hasIncoming) {
       findings.push({
         severity: "info",
@@ -138,6 +144,18 @@ export function runDoctor(vault: Vault): DoctorFinding[] {
 
   const order = { error: 0, warning: 1, info: 2 };
   return findings.sort((a, b) => order[a.severity] - order[b.severity]);
+}
+
+/**
+ * Unresolved wikilinks with a file extension (`![[diagram.png]]`) point at
+ * attachments, not notes. The extension must look like one (a letter then up
+ * to 9 alphanumerics) so titles such as "Release 1.2" or "Meeting w. Bob" are
+ * still checked as note links.
+ */
+function isAttachmentTarget(target: string): boolean {
+  const basename = target.split(/[\\/]/).pop() ?? target;
+  const extension = /\.([A-Za-z][A-Za-z0-9]{0,9})$/.exec(basename)?.[1]?.toLowerCase();
+  return extension !== undefined && extension !== "md";
 }
 
 /** Distinct informative words of a note body, for cheap duplicate detection. */

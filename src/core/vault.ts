@@ -7,7 +7,7 @@ import { autoCommit } from "./git.js";
 import { parseNote } from "./parse.js";
 import { SearchIndex } from "./search.js";
 import type { BrainConfig, Note, NoteLink, SearchOptions, SearchResult } from "./types.js";
-import { nameKey, safeFilename, toPosix, todayISO } from "./util.js";
+import { nameKey, safeFilename, toLF, toPosix, todayISO } from "./util.js";
 import { atomicWriteFile, withNoteLock } from "./write.js";
 
 export interface CreateNoteInput {
@@ -33,6 +33,8 @@ export class Vault {
   readonly dir: string;
   readonly config: BrainConfig;
   private notesByPath = new Map<string, Note>();
+  /** name key (title, alias, filename stem) -> notes, best match first; rebuilt lazily. */
+  private nameIndex: Map<string, Note[]> | undefined;
   /** Per-path stat signature used to decide whether a file needs reparsing. */
   private signatures = new Map<string, string>();
   private index = new SearchIndex();
@@ -75,6 +77,7 @@ export class Vault {
       const signature = `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}`;
       if (this.notesByPath.has(posix) && this.signatures.get(posix) === signature) continue;
       const raw = fs.readFileSync(abs, "utf8");
+      this.nameIndex = undefined;
       this.notesByPath.set(
         posix,
         parseNote({
@@ -92,6 +95,7 @@ export class Vault {
       if (!seen.has(p)) {
         this.notesByPath.delete(p);
         this.signatures.delete(p);
+        this.nameIndex = undefined;
       }
     }
     this.index.sync(this.notesByPath);
@@ -113,22 +117,32 @@ export class Vault {
     const byPath =
       this.notesByPath.get(cleaned) ?? this.notesByPath.get(`${cleaned.replace(/\.md$/, "")}.md`);
     if (byPath) return byPath;
-    const key = nameKey(cleaned.replace(/\.md$/, ""));
-    const candidates: Note[] = [];
+    return this.names().get(nameKey(cleaned.replace(/\.md$/, "")))?.[0];
+  }
+
+  /**
+   * Name lookup table. get() runs inside link-resolution loops (backlinks,
+   * doctor, related), so a linear scan per call made those quadratic or worse.
+   */
+  private names(): Map<string, Note[]> {
+    if (this.nameIndex) return this.nameIndex;
+    const index = new Map<string, Note[]>();
     for (const note of this.notesByPath.values()) {
-      const stem = path.basename(note.path, ".md");
-      if (
-        nameKey(note.title) === key ||
-        nameKey(stem) === key ||
-        note.aliases.some((a) => nameKey(a) === key)
-      ) {
-        candidates.push(note);
-      }
+      const keys = new Set([
+        nameKey(note.title),
+        nameKey(path.basename(note.path, ".md")),
+        ...note.aliases.map(nameKey),
+      ]);
+      for (const key of keys) index.set(key, [...(index.get(key) ?? []), note]);
     }
-    candidates.sort(
-      (a, b) => Number(a.archived) - Number(b.archived) || a.path.length - b.path.length,
-    );
-    return candidates[0];
+    // Ambiguous names prefer non-archived, then shortest path.
+    for (const notes of index.values()) {
+      notes.sort(
+        (a, b) => Number(a.archived) - Number(b.archived) || a.path.length - b.path.length,
+      );
+    }
+    this.nameIndex = index;
+    return index;
   }
 
   /** Resolve a wikilink target to a note, if it exists. */
@@ -227,7 +241,12 @@ export class Vault {
     const updated = withNoteLock(this.dir, notePath, () => {
       const note = this.reloadPath(notePath);
       if (!note) throw new Error(`Note changed or moved before it could be written: ${notePath}`);
-      atomicWriteFile(note.absPath, mutate(note));
+      // Mutations work on LF text; the result is written back with the file's
+      // dominant line ending, so editing a CRLF note never flips it to LF. (A
+      // file mixing both is normalized to whichever it mostly uses.)
+      const crlf = usesCRLF(note.raw);
+      const next = mutate(crlf ? { ...note, raw: toLF(note.raw) } : note);
+      atomicWriteFile(note.absPath, crlf ? toLF(next).replace(/\n/g, "\r\n") : next);
       const reloaded = this.reloadPath(notePath);
       if (!reloaded) throw new Error(`Failed to read back updated note: ${notePath}`);
       return reloaded;
@@ -314,6 +333,7 @@ export class Vault {
         }
         fs.renameSync(current.absPath, destAbs);
         this.notesByPath.delete(sourcePath);
+        this.nameIndex = undefined;
         const result = this.reloadPath(toPosix(destRel));
         if (!result) throw new Error(`Failed to read back archived note: ${destRel}`);
         return result;
@@ -359,9 +379,17 @@ export class Vault {
     const posix = toPosix(rel);
     this.notesByPath.delete(posix);
     this.signatures.delete(posix);
+    this.nameIndex = undefined;
     this.refresh();
     return this.notesByPath.get(posix);
   }
+}
+
+/** True when most of the file's line breaks are CRLF. */
+function usesCRLF(raw: string): boolean {
+  const crlf = raw.match(/\r\n/g)?.length ?? 0;
+  const all = raw.match(/\n/g)?.length ?? 0;
+  return crlf > 0 && crlf * 2 >= all;
 }
 
 function countFrontmatterLines(raw: string): number {

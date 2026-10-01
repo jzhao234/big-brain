@@ -39,7 +39,7 @@ export function summarizeProject(note: Note): ProjectSummary {
     area: note.frontmatter.area ? String(note.frontmatter.area) : undefined,
     due: note.frontmatter.due ? String(note.frontmatter.due) : undefined,
     openTasks: open.length,
-    doneTasks: note.tasks.length - open.length,
+    doneTasks: note.tasks.filter((t) => t.done).length,
     nextTasks: open.slice(0, 3),
     updatedMs: note.mtimeMs,
     excerpt: note.excerpt,
@@ -76,7 +76,9 @@ export function createProject(vault: Vault, input: CreateProjectInput): Note {
   const tpl = vault.template("project");
   const goal = input.goal?.trim() ?? "";
   const body = tpl
-    ? tpl.replace(/\{\{\s*goal\s*\}\}/g, goal).replace(/\{\{\s*title\s*\}\}/g, input.title)
+    ? tpl
+        .replace(/\{\{\s*goal\s*\}\}/g, () => goal)
+        .replace(/\{\{\s*title\s*\}\}/g, () => input.title)
     : `## Goal\n\n${goal}\n\n## Tasks\n\n## Notes\n\n## Log\n`;
   return vault.createNote({
     title: input.title,
@@ -98,5 +100,6 @@ export function setProjectStatus(vault: Vault, ref: string, status: ProjectStatu
   if (note.type !== "project") throw new Error(`Not a project: ${note.path} (type=${note.type})`);
   const updates: Record<string, unknown> = { status };
   if (status === "done") updates.completed = todayISO();
+  else updates.completed = null;
   return vault.updateFrontmatter(note.path, updates);
 }

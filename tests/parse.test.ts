@@ -158,3 +158,16 @@ describe("frontmatter dates", () => {
     expect(parse("notes/a.md", raw).frontmatter.status).toBe("active");
   });
 });
+
+describe("CRLF notes", () => {
+  it("parses tasks, headings, and frontmatter from CRLF files", () => {
+    const raw =
+      "---\r\ntype: project\r\n---\r\n\r\n## Tasks\r\n\r\n- [ ] write docs 📅 2026-01-05\r\n";
+    const note = parse("projects/P.md", raw);
+    expect(note.frontmatter.type).toBe("project");
+    expect(note.headings.map((h) => h.text)).toEqual(["Tasks"]);
+    expect(note.tasks).toHaveLength(1);
+    expect(note.tasks[0]).toMatchObject({ text: "write docs", due: "2026-01-05", line: 6 });
+    expect(note.raw).toBe(raw); // on-disk bytes are kept for hashing
+  });
+});
