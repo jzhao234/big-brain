@@ -3,14 +3,27 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** Locate the packaged skills directory (big-brain/skills). */
-export function skillsDir(): string {
+/**
+ * Locate the packaged skills for one agent (big-brain/skills/<agent>). Each
+ * agent gets its own copy because skill wording and metadata differ (Claude
+ * uses /name, Codex uses $name plus agents/openai.yaml).
+ */
+export function skillsDir(agent = "claude"): string {
   const here = path.dirname(fileURLToPath(import.meta.url)); // dist/core
-  const dir = path.resolve(here, "..", "..", "skills");
+  const dir = path.resolve(here, "..", "..", "skills", agent);
   if (!fs.existsSync(dir)) {
     throw new Error(`Bundled skills not found at ${dir} — is the package installed correctly?`);
   }
   return dir;
+}
+
+/** Packaged skills for an agent, or null when big-brain ships none for it. */
+export function bundledSkillsDir(agent: string): string | null {
+  try {
+    return skillsDir(agent);
+  } catch {
+    return null;
+  }
 }
 
 /** Default Claude Code skills directory (~/.claude/skills). */

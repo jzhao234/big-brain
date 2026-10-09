@@ -1,0 +1,4 @@
+interface:
+  display_name: "Weekly Review"
+  short_description: "Run a guided Big Brain weekly review"
+  default_prompt: "Use $weekly to run my Big Brain weekly review with me."

@@ -57,6 +57,7 @@ export class Vault {
         ".obsidian/**",
         ".trash/**",
         `${this.config.folders.templates}/**`,
+        `${this.config.folders.agents}/**`,
         ...this.config.ignore,
       ],
       dot: false,

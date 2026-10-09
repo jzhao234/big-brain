@@ -117,20 +117,48 @@ The whole point is that you never re-feed context. The assistant **loads** a sma
 
 **Review** — `/weekly` runs a guided pass: triage the inbox, prune projects, reschedule overdue tasks, fix broken links, and **consolidate** — `big-brain doctor` flags bloated notes and near-duplicates, and the review proposes splits/merges/stale-fact pruning for your approval. Capture and search keep a brain useful; consolidation keeps it trustworthy.
 
-## Skills (Claude Code)
+## Skills
 
-Three [Claude Code skills](https://docs.claude.com/en/docs/claude-code) wrap the tools into slash-commands:
+Three skills wrap the tools into commands, for Claude Code (`/brain`) and Codex (`$brain`):
 
-- **`/brain`** — load the overview and switch into brain-aware mode for the session
-- **`/capture`** — zero-friction capture to the inbox
-- **`/weekly`** — a guided weekly review
+- **`brain`** — load the overview and switch into brain-aware mode for the session
+- **`capture`** — zero-friction capture to the inbox
+- **`weekly`** — a guided weekly review
 
-```bash
-big-brain install-skills          # add them to ~/.claude/skills (skips existing)
-big-brain install-skills --force  # overwrite existing versions
+`big-brain agents install claude codex` installs them for both agents (see below). `big-brain install-skills` still copies the Claude versions into `~/.claude/skills` (`--force` overwrites). They're path-agnostic — they call the `big-brain` CLI / MCP tools and resolve the vault from `BIG_BRAIN_VAULT` (or `--vault`), so the same skill works on every machine.
+
+## Agent profiles: your agent setup in the vault
+
+Your coding agents' personal setup — skills, global instructions, hooks, the status line, a few settings — can live in the vault too, so every machine gets the same setup from one command and a change made on one machine reaches the others through git.
+
+```
+agents/claude/instructions.md   -> ~/.claude/CLAUDE.md
+agents/claude/skills/<name>/    -> ~/.claude/skills/<name>   (one link per skill)
+agents/claude/files/**          -> ~/.claude/**              (one link per file: statusline.sh, hooks/…)
+agents/claude/settings.json     -> merged into ~/.claude/settings.json
+agents/codex/instructions.md    -> ~/.codex/AGENTS.md
+agents/codex/skills/<name>/     -> ~/.codex/skills/<name>
+agents/codex/config.toml        -> merged into ~/.codex/config.toml
 ```
 
-They're path-agnostic — they call the `big-brain` CLI / MCP tools and resolve the vault from `BIG_BRAIN_VAULT` (or `--vault`), so the same skill works on every machine. Restart Claude Code to pick them up.
+```bash
+big-brain agents status                    # linked, missing, edited here, or only on this machine
+big-brain agents install --dry-run         # show the plan
+big-brain agents install                   # link everything (agents with a profile; or name them)
+big-brain agents save claude statusline.sh --setting statusLine    # capture a local change
+big-brain agents save codex skills/my-skill --setting tui.status_line
+```
+
+How it stays safe:
+
+- **Links, not copies.** Edit a skill or script in the vault (or through the link) and every machine has it after `git pull`. Everything else in `~/.claude` / `~/.codex` — other skills, history, credentials — is never touched.
+- **Nothing unmanaged is replaced unless you say so.** A file in the way is reported; `--replace` moves it to a timestamped backup under `~/.local/state/big-brain/backups` (outside every agent folder, so a backed-up skill is never picked up) with a restore manifest, then links the vault's.
+- **Settings merge three ways.** big-brain remembers what it applied on each machine: a value you edited locally is reported, not overwritten (`--replace` takes the vault's); a value you never touched follows the vault; a key dropped from the vault is removed only if it wasn't edited. Claude hooks are matched by event, matcher, and command, so changing a timeout updates the hook instead of registering it twice. TOML is edited line by line (comments, trust entries and hook hashes stay put), and any edit that would change more than the managed keys is refused.
+- **Plan first, then write.** Every link and settings change is validated before the first write; a refusal leaves the machine untouched. `--prune` removes links whose vault file was deleted.
+- **`save` never captures secrets or machine state.** Settings files, `.credentials.json`, `auth.json`, `.env` files, history, sessions, caches and databases are refused — save individual settings with `--setting`.
+- **Codex hooks stay local.** Codex asks you to trust each hook on each machine, so hook registrations are not managed for Codex. Claude Code users: review new hooks with `/hooks`. Status warns when Codex's `AGENTS.override.md` overrides `AGENTS.md`.
+
+`CLAUDE_CONFIG_DIR` and `CODEX_HOME` are honored. The folder name is `folders.agents` in `brain.config.json` (default `agents`), and it is never indexed as notes.
 
 ## Use it on multiple machines
 
@@ -147,7 +175,7 @@ The vault is a git repo, so this is just git: **clone it on each machine, and ea
 
   `--ff-only` means a pull never clobbers local work. (Or just `git -C ~/brain pull` by hand.)
 
-On a fresh machine: install big-brain (above), `git clone` your vault, `big-brain install-skills`, register the MCP server. Four commands and you're identical to your other machines.
+On a fresh machine: install big-brain (above), `git clone` your vault, `big-brain agents install`, register the MCP server. Four commands and your notes, skills, instructions, hooks, and status lines match your other machines.
 
 ## Seed it from your existing AI history
 
@@ -215,6 +243,7 @@ big-brain capture <text>        quick capture           big-brain doctor
 big-brain daily [--log "..."]   daily note / journal    big-brain index [--status|--rebuild]
 big-brain append <note> <text>  append [--heading H]    big-brain frontmatter <note> k=v ...
 big-brain archive <note>        archive (non-destructive delete)
+big-brain agents status|install|save   agent setup from the vault (see Agent profiles)
 big-brain install-skills        add Claude Code skills  big-brain mcp   run the MCP server
 ```
 

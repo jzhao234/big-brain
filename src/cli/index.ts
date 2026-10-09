@@ -1,9 +1,22 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import pc from "picocolors";
+import {
+  AGENTS,
+  type AgentDef,
+  type InstallReport,
+  agentPaths,
+  agentStatus,
+  getAgent,
+  installAgent,
+  leafLabel,
+  saveToProfile,
+} from "../core/agents.js";
 import { resolveVault } from "../core/config.js";
 import { getDailyNote, logToDaily } from "../core/daily.js";
 import { runDoctor } from "../core/doctor.js";
@@ -565,6 +578,209 @@ program
       for (const s of result.skipped)
         console.log(pc.dim(`  = /${s} (kept existing; --force to replace)`));
       console.log(pc.dim("\nRestart Claude Code (or start a new session) to pick them up."));
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+// --- agents: each coding agent's setup, kept in the vault -------------------
+
+const LINK_MARKS: Record<string, string> = {
+  none: pc.green("✓"),
+  keep: pc.dim("="),
+  link: pc.green("+"),
+  copy: pc.green("+"),
+  replace: pc.yellow("~"),
+  conflict: pc.red("!"),
+};
+
+const SETTING_MARKS: Record<string, string> = {
+  ok: pc.green("✓"),
+  add: pc.green("+"),
+  update: pc.yellow("↻"),
+  remove: pc.yellow("−"),
+  conflict: pc.red("!"),
+  "edited-kept": pc.dim("="),
+};
+
+function agentsFor(names: string[], vaultDir: string, agentsFolder: string): AgentDef[] {
+  if (names.length > 0) return names.map(getAgent);
+  return AGENTS.filter((a) => fs.existsSync(path.join(vaultDir, agentsFolder, a.name)));
+}
+
+function tilde(p: string): string {
+  const home = os.homedir();
+  return p === home || p.startsWith(`${home}/`) ? `~${p.slice(home.length)}` : p;
+}
+
+function printAgentReport(report: InstallReport, verbose: boolean): number {
+  const p = report.paths;
+  let problems = 0;
+  let shown = 0;
+  console.log(pc.bold(`${p.agent.label} ${pc.dim(`(${tilde(p.home)})`)}`));
+  for (const l of report.links) {
+    if (l.action === "conflict") problems++;
+    if (!verbose && (l.action === "none" || l.action === "keep") && l.state !== "copy-differs")
+      continue;
+    shown++;
+    const what =
+      l.action === "conflict"
+        ? `${l.entry.rel}: ${l.state === "other-link" ? "a link to somewhere else" : "an unmanaged file"} is in the way (--replace backs it up and links the vault's)`
+        : l.action === "replace"
+          ? `${l.entry.rel}: back up what's there, then link`
+          : l.entry.kind === "bundled-skill" && l.state === "copy-differs"
+            ? `${l.entry.rel}: kept (differs from big-brain's bundled copy)`
+            : `${l.entry.rel}${l.entry.kind === "bundled-skill" ? pc.dim(" (bundled)") : ""}`;
+    console.log(`  ${LINK_MARKS[l.action] ?? " "} ${what}`);
+  }
+  for (const s of report.settings) {
+    if (s.action === "conflict") problems++;
+    if (!verbose && s.action === "ok") continue;
+    shown++;
+    const note =
+      s.action === "conflict"
+        ? " — set differently here (--replace takes the vault's value)"
+        : s.action === "edited-kept"
+          ? " — no longer in the vault, but edited here, so left as is"
+          : "";
+    console.log(
+      `  ${SETTING_MARKS[s.action] ?? " "} ${tilde(report.settingsFile)}: ${leafLabel(s.leaf)}${note}`,
+    );
+  }
+  for (const rel of report.stale) {
+    shown++;
+    const done = report.pruned.includes(rel);
+    console.log(
+      `  ${pc.yellow(done ? "−" : "?")} ${rel}: ${done ? "removed (vault copy is gone)" : "links to a vault file that is gone (--prune removes it)"}`,
+    );
+  }
+  if (report.hookChanges && p.agent.name === "claude") {
+    console.log(
+      pc.dim("  Hooks changed: review them with /hooks in Claude Code or start a new session."),
+    );
+  }
+  if (shown === 0) console.log(pc.dim("  ✓ everything in place"));
+  if (report.backupDir)
+    console.log(pc.dim(`  Previous versions of changed files saved to ${tilde(report.backupDir)}`));
+  return problems;
+}
+
+const agents = program
+  .command("agents")
+  .description(
+    "install or save each coding agent's setup (skills, instructions, hooks, status line)",
+  );
+
+agents
+  .command("status [agents...]")
+  .description("show what is linked, missing, edited here, or not saved yet")
+  .option("-v, --verbose", "also list everything that is already in place")
+  .action((names: string[], opts: { verbose?: boolean }) => {
+    try {
+      const vault = openVault();
+      const folder = vault.config.folders.agents;
+      const list = names.length > 0 ? names.map(getAgent) : AGENTS;
+      for (const agent of list) {
+        const p = agentPaths(vault.dir, folder, agent);
+        if (!fs.existsSync(p.profile) && !fs.existsSync(p.home)) continue;
+        const report = agentStatus(p);
+        printAgentReport(report, Boolean(opts.verbose));
+        if (!fs.existsSync(p.profile))
+          console.log(pc.dim(`  No profile in the vault (${folder}/${agent.name}).`));
+        if (report.overrideActive) {
+          console.log(
+            pc.yellow(
+              `  ! ${tilde(report.overrideActive)} exists and overrides ${agent.instructionsFile}`,
+            ),
+          );
+        }
+        for (const skill of report.localSkills) {
+          console.log(
+            `  ${pc.cyan("·")} ${agent.skillsDir}/${skill}: only on this machine (big-brain agents save ${agent.name} ${agent.skillsDir}/${skill})`,
+          );
+        }
+      }
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+agents
+  .command("install [agents...]")
+  .description("link each agent's setup from the vault (default: agents with a profile)")
+  .option("-n, --dry-run", "show the plan, change nothing")
+  .option("--replace", "back up and replace unmanaged files and locally edited settings")
+  .option("--prune", "remove links whose vault file was deleted")
+  .option("-v, --verbose", "also list everything that is already in place")
+  .action(
+    (
+      names: string[],
+      opts: { dryRun?: boolean; replace?: boolean; prune?: boolean; verbose?: boolean },
+    ) => {
+      try {
+        const vault = openVault();
+        const folder = vault.config.folders.agents;
+        const list = agentsFor(names, vault.dir, folder);
+        if (list.length === 0) {
+          return console.log(
+            pc.dim(
+              `No agent profiles in ${folder}/ yet. Name an agent to install big-brain's own skills.`,
+            ),
+          );
+        }
+        if (opts.dryRun) console.log(pc.dim("Dry run: nothing will change.\n"));
+        let problems = 0;
+        for (const agent of list) {
+          problems += printAgentReport(
+            installAgent(agentPaths(vault.dir, folder, agent), opts),
+            Boolean(opts.verbose),
+          );
+        }
+        if (problems > 0) {
+          console.log(pc.yellow(`\n${problems} item(s) left as is; see the ! lines above.`));
+          process.exitCode = 1;
+        } else if (!opts.dryRun) {
+          console.log(pc.dim("\nStart a new agent session to pick up the changes."));
+        }
+      } catch (err) {
+        fail(err);
+      }
+    },
+  );
+
+agents
+  .command("save <agent> [paths...]")
+  .description("copy files or skills set up on this machine into the vault, then link them")
+  .option(
+    "-s, --setting <key>",
+    "also save a settings key, e.g. statusLine or tui.status_line (repeatable)",
+    (value: string, prev: string[]) => [...prev, value],
+    [] as string[],
+  )
+  .option("--force", "overwrite what the vault already has at that path")
+  .action((name: string, rels: string[], opts: { setting: string[]; force?: boolean }) => {
+    try {
+      if (rels.length === 0 && opts.setting.length === 0) {
+        throw new Error("Name at least one path (e.g. statusline.sh, skills/foo) or --setting key");
+      }
+      const vault = openVault();
+      const agent = getAgent(name);
+      const p = agentPaths(vault.dir, vault.config.folders.agents, agent);
+      const result = saveToProfile(p, vault.dir, rels, opts.setting, { force: opts.force });
+      vault.commit(`big-brain: save ${agent.name} agent setup`, result.touched);
+      for (const s of result.saved) console.log(pc.green(`Saved ${s.rel} → ${tilde(s.vaultPath)}`));
+      for (const s of result.settings) {
+        console.log(
+          pc.green(
+            `Saved setting ${s.key} → ${vault.config.folders.agents}/${agent.name}/${agent.settingsFile}`,
+          ),
+        );
+      }
+      if (result.saved.length === 0 && result.settings.length === 0) {
+        console.log(pc.dim("Nothing to save: already linked from the vault."));
+      }
+      if (result.backupDir)
+        console.log(pc.dim(`Originals backed up to ${tilde(result.backupDir)}`));
     } catch (err) {
       fail(err);
     }

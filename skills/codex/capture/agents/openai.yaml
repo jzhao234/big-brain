@@ -1,0 +1,4 @@
+interface:
+  display_name: "Capture"
+  short_description: "Capture a thought into the Big Brain vault"
+  default_prompt: "Use $capture to save this thought into my Big Brain."
