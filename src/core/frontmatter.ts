@@ -42,3 +42,37 @@ export function parseFrontmatter(raw: string): ParsedFrontmatter {
 export function stringifyNote(body: string, data: Record<string, unknown>): string {
   return matter.stringify(body, data, OPTIONS);
 }
+
+/**
+ * Read one command-line frontmatter value the way the vault reads `key: value`
+ * (same schema, so `2026-01-05` stays a string). `null`, `~`, or nothing means
+ * null, which deletes the key. Text that YAML would turn into something the
+ * user didn't type as such stays plain text: `Note: see X` is not a mapping,
+ * `- a` is not a list, and `#work` is not a comment.
+ */
+export function parseFrontmatterValue(text: string): unknown {
+  const t = text.trim();
+  if (t === "" || t === "~" || t.toLowerCase() === "null") return null;
+  let value: unknown;
+  try {
+    value = yaml.load(t, { schema: SCHEMA });
+  } catch {
+    return t;
+  }
+  if (value === null || value === undefined) return t;
+  if (Array.isArray(value)) return t.startsWith("[") ? value : t;
+  if (typeof value === "object") return t.startsWith("{") ? value : t;
+  return value;
+}
+
+/** Parse `key=value` arguments into frontmatter updates (split at the first `=`). */
+export function parseFrontmatterAssignments(args: string[]): Record<string, unknown> {
+  const updates: Record<string, unknown> = {};
+  for (const arg of args) {
+    const eq = arg.indexOf("=");
+    const key = eq === -1 ? "" : arg.slice(0, eq).trim();
+    if (!key) throw new Error(`Invalid frontmatter assignment: ${arg} (want key=value)`);
+    updates[key] = parseFrontmatterValue(arg.slice(eq + 1));
+  }
+  return updates;
+}
