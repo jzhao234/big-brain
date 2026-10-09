@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parse as parseToml } from "smol-toml";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type AgentPaths,
   agentPaths,
@@ -46,7 +46,7 @@ function home(agent: "claude" | "codex"): string {
 }
 
 beforeEach(() => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), "bb-agents-"));
+  root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "bb-agents-")));
   userHome = path.join(root, "home");
   vaultDir = path.join(root, "vault");
   fs.mkdirSync(userHome);
@@ -595,5 +595,134 @@ describe("regressions found in code review", () => {
     expect(parseToml(text)).toEqual({
       tui: { status_line: ["model"], status_line_use_colors: true },
     });
+  });
+});
+
+describe("regressions found in the second review", () => {
+  const claudeSettings = (h = home("claude")) => path.join(h, "settings.json");
+  const readJson = (file: string) => JSON.parse(fs.readFileSync(file, "utf8"));
+  const unix = process.getuid?.() !== 0;
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it.skipIf(!unix)("save --force keeps the vault copy intact when copying fails", () => {
+    profile("claude", "skills/mine/SKILL.md", "vault version");
+    write(path.join(home("claude"), "skills/mine/SKILL.md"), "local version");
+    write(path.join(home("claude"), "skills/mine/secret-ish.txt"), "unreadable", 0o000);
+    try {
+      expect(() =>
+        saveToProfile(paths("claude"), vaultDir, ["skills/mine"], [], { force: true }),
+      ).toThrow(/rolled back/);
+      const vaultSkill = path.join(vaultDir, "agents/claude/skills/mine");
+      expect(fs.readdirSync(vaultSkill)).toEqual(["SKILL.md"]);
+      expect(fs.readFileSync(path.join(vaultSkill, "SKILL.md"), "utf8")).toBe("vault version");
+      expect(
+        fs
+          .readdirSync(path.join(vaultDir, "agents/claude"))
+          .some((n) => n.startsWith(".big-brain")),
+      ).toBe(false);
+      expect(fs.lstatSync(path.join(home("claude"), "skills/mine")).isSymbolicLink()).toBe(false);
+    } finally {
+      fs.chmodSync(path.join(home("claude"), "skills/mine/secret-ish.txt"), 0o600);
+    }
+  });
+
+  it.skipIf(!unix)("save --force replaces a vault skill that has a read-only folder", () => {
+    profile("claude", "skills/mine/SKILL.md", "vault version");
+    profile("claude", "skills/mine/ro/file.txt", "x");
+    fs.chmodSync(path.join(vaultDir, "agents/claude/skills/mine/ro"), 0o500);
+    write(path.join(home("claude"), "skills/mine/SKILL.md"), "local version");
+    saveToProfile(paths("claude"), vaultDir, ["skills/mine"], [], { force: true });
+    expect(fs.readFileSync(path.join(vaultDir, "agents/claude/skills/mine/SKILL.md"), "utf8")).toBe(
+      "local version",
+    );
+    expect(fs.existsSync(path.join(vaultDir, "agents/claude/skills/mine/ro"))).toBe(false);
+  });
+
+  it("a failed bundled-skill copy leaves no half-written skill and restores what was there", () => {
+    const target = path.join(root, "someone-elses-brain");
+    write(path.join(target, "SKILL.md"), "theirs");
+    fs.mkdirSync(path.join(home("claude"), "skills"), { recursive: true });
+    fs.symlinkSync(target, path.join(home("claude"), "skills/brain"));
+    const real = fs.cpSync;
+    vi.spyOn(fs, "cpSync").mockImplementation((src, dest, opts) => {
+      if (String(dest).includes(".big-brain-staging")) {
+        fs.mkdirSync(String(dest), { recursive: true });
+        fs.writeFileSync(path.join(String(dest), "partial"), "half");
+        throw new Error("disk full");
+      }
+      return real(src, dest, opts);
+    });
+    expect(() => installAgent(paths("claude"), { replace: true })).toThrow(
+      /rolled back.*disk full/,
+    );
+    expect(fs.readlinkSync(path.join(home("claude"), "skills/brain"))).toBe(target);
+    expect(fs.readdirSync(home("claude")).some((n) => n.startsWith(".big-brain"))).toBe(false);
+  });
+
+  it("saving a settings group replaces it exactly, including an emptied one", () => {
+    fs.mkdirSync(home("claude"), { recursive: true });
+    profile("claude", "settings.json", JSON.stringify({ env: { FOO: "old", BAR: "remove" } }));
+    write(claudeSettings(), JSON.stringify({ env: { FOO: "new" } }));
+    saveToProfile(paths("claude"), vaultDir, [], ["env"]);
+    expect(readJson(path.join(vaultDir, "agents/claude/settings.json")).env).toEqual({
+      FOO: "new",
+    });
+    expect(Object.keys(readState(paths("claude")).settings).some((id) => id.includes("BAR"))).toBe(
+      false,
+    );
+
+    write(claudeSettings(), JSON.stringify({ env: {} }));
+    saveToProfile(paths("claude"), vaultDir, [], ["env"]);
+    expect(readJson(path.join(vaultDir, "agents/claude/settings.json")).env ?? {}).toEqual({});
+    expect(readState(paths("claude")).settings).toEqual({});
+  });
+
+  it("--prune never deletes through a folder that became a symlink", () => {
+    profile("claude", "files/hooks/x.sh", "x");
+    installAgent(paths("claude"));
+    const external = path.join(root, "external-hooks");
+    fs.renameSync(path.join(home("claude"), "hooks"), external);
+    fs.symlinkSync(external, path.join(home("claude"), "hooks"));
+    fs.rmSync(path.join(vaultDir, "agents/claude/files/hooks/x.sh"));
+    const report = installAgent(paths("claude"), { prune: true });
+    expect(report.pruned).toEqual([]);
+    expect(fs.lstatSync(path.join(external, "x.sh")).isSymbolicLink()).toBe(true);
+  });
+
+  it("writes through a symlinked settings file and keeps the link, also on rollback", () => {
+    const dotfiles = path.join(root, "dotfiles/claude-settings.json");
+    write(dotfiles, JSON.stringify({ theme: "dark" }));
+    fs.mkdirSync(home("claude"), { recursive: true });
+    fs.symlinkSync(dotfiles, claudeSettings());
+    profile("claude", "settings.json", JSON.stringify({ effortLevel: "high" }));
+    installAgent(paths("claude"));
+    expect(fs.lstatSync(claudeSettings()).isSymbolicLink()).toBe(true);
+    expect(readJson(dotfiles)).toEqual({ theme: "dark", effortLevel: "high" });
+
+    if (!unix) return;
+    profile("claude", "settings.json", JSON.stringify({ effortLevel: "high", model: "opus" }));
+    const stateDir = path.dirname(paths("claude").stateFile);
+    fs.chmodSync(stateDir, 0o500); // the final state write will fail
+    try {
+      expect(() => installAgent(paths("claude"))).toThrow(/rolled back/);
+    } finally {
+      fs.chmodSync(stateDir, 0o700);
+    }
+    expect(fs.lstatSync(claudeSettings()).isSymbolicLink()).toBe(true);
+    expect(readJson(dotfiles)).toEqual({ theme: "dark", effortLevel: "high" });
+  });
+
+  it("treats a symlinked path to the same home as the same home", () => {
+    profile("claude", "settings.json", JSON.stringify({ effortLevel: "high" }));
+    installAgent(paths("claude"));
+    write(claudeSettings(), JSON.stringify({ theme: "dark" })); // deleted by hand
+    const alias = path.join(root, "alias-to-claude");
+    fs.symlinkSync(home("claude"), alias);
+    const viaAlias = paths("claude", { CLAUDE_CONFIG_DIR: alias });
+    expect(viaAlias.stateFile).toBe(paths("claude").stateFile);
+    const report = installAgent(viaAlias);
+    expect(report.settings[0]).toMatchObject({ action: "conflict", deletedHere: true });
+    expect(readJson(claudeSettings())).toEqual({ theme: "dark" });
   });
 });
