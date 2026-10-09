@@ -218,7 +218,7 @@ big-brain archive <note>        archive (non-destructive delete)
 big-brain install-skills        add Claude Code skills  big-brain mcp   run the MCP server
 ```
 
-Every list command takes `--json` for scripting. Put `--` before `append` text that starts with `-` (a list item), or it is read as an option. `frontmatter` reads each value as YAML, like `key: value` in the file: `tags=[work, llm]` is a list, `due=2026-11-01` stays a date string, and `key=null` (or `key=`) removes the key.
+Every list command takes `--json` for scripting. Put `--` before `append` text that starts with `-` (a list item), or it is read as an option. `frontmatter` reads each value as YAML, like `key: value` in the file: `'tags=[work, llm]'` is a list, `due=2026-11-01` stays a date string, and `key=null` (or `key=`) removes the key. Quote any assignment that contains spaces, or the shell splits it into separate arguments.
 
 ## Design principles
 
