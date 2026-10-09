@@ -16,6 +16,7 @@ export const DEFAULT_CONFIG: BrainConfig = {
     reference: "reference",
     archive: "archive",
     templates: "templates",
+    agents: "agents",
   },
   ignore: [],
   staleProjectDays: 21,

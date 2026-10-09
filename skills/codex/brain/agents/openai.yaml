@@ -1,0 +1,4 @@
+interface:
+  display_name: "Brain"
+  short_description: "Orient and work from the Big Brain vault"
+  default_prompt: "Use $brain to orient me from my Big Brain and keep it current."

@@ -125,6 +125,8 @@ export interface BrainConfig {
     reference: string;
     archive: string;
     templates: string;
+    /** Coding-agent profiles (skills, instructions, settings); never scanned as notes. */
+    agents: string;
   };
   /** Extra glob patterns to ignore when scanning. */
   ignore: string[];

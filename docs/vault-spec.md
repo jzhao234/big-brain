@@ -17,6 +17,7 @@ The folder names are defaults; override them in `brain.config.json` if you're ad
 | `reference/` | `reference` | External facts: docs, credentials-adjacent info, how-tos. |
 | `archive/` | — | Retired notes of any type, moved here instead of deleted. Excluded from search/listing by default; original subfolder is preserved (`archive/projects/Old.md`). |
 | `templates/` | — | Note templates. Never indexed. |
+| `agents/` | — | Coding-agent profiles (skills, instructions, settings) for `big-brain agents`. Never indexed. |
 
 A note's `type` comes from frontmatter when present, otherwise from its top-level folder.
 
@@ -37,7 +38,7 @@ A note's `type` comes from frontmatter when present, otherwise from its top-leve
 }
 ```
 
-All keys optional. `folders` only needs the entries you rename. `ignore` takes extra glob patterns to exclude from scanning. `node_modules`, `.git`, `.obsidian`, `.trash`, and the templates folder are always excluded.
+All keys optional. `folders` only needs the entries you rename. `ignore` takes extra glob patterns to exclude from scanning. `node_modules`, `.git`, `.obsidian`, `.trash`, the templates folder, and the agents folder are always excluded.
 
 ### Search & embeddings (hybrid retrieval)
 
