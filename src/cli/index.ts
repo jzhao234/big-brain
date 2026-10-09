@@ -601,6 +601,7 @@ const SETTING_MARKS: Record<string, string> = {
   remove: pc.yellow("−"),
   conflict: pc.red("!"),
   "edited-kept": pc.dim("="),
+  forget: pc.dim("·"),
 };
 
 function agentsFor(names: string[], vaultDir: string, agentsFolder: string): AgentDef[] {
@@ -624,25 +625,31 @@ function printAgentReport(report: InstallReport, verbose: boolean): number {
       continue;
     shown++;
     const what =
-      l.action === "conflict"
-        ? `${l.entry.rel}: ${l.state === "other-link" ? "a link to somewhere else" : "an unmanaged file"} is in the way (--replace backs it up and links the vault's)`
-        : l.action === "replace"
-          ? `${l.entry.rel}: back up what's there, then link`
-          : l.entry.kind === "bundled-skill" && l.state === "copy-differs"
-            ? `${l.entry.rel}: kept (differs from big-brain's bundled copy)`
-            : `${l.entry.rel}${l.entry.kind === "bundled-skill" ? pc.dim(" (bundled)") : ""}`;
+      l.action === "conflict" && l.reason
+        ? `${l.entry.rel}: ${l.reason}; fix that by hand (--replace never changes parent folders)`
+        : l.action === "conflict"
+          ? `${l.entry.rel}: ${l.state === "other-link" ? "a link to somewhere else" : "an unmanaged file"} is in the way (--replace backs it up and links the vault's)`
+          : l.action === "replace"
+            ? `${l.entry.rel}: back up what's there, then link`
+            : l.entry.kind === "bundled-skill" && l.state === "copy-differs"
+              ? `${l.entry.rel}: kept (differs from big-brain's bundled copy)`
+              : `${l.entry.rel}${l.entry.kind === "bundled-skill" ? pc.dim(" (bundled)") : ""}`;
     console.log(`  ${LINK_MARKS[l.action] ?? " "} ${what}`);
   }
   for (const s of report.settings) {
     if (s.action === "conflict") problems++;
-    if (!verbose && s.action === "ok") continue;
+    if (!verbose && (s.action === "ok" || s.action === "forget")) continue;
     shown++;
     const note =
-      s.action === "conflict"
-        ? " — set differently here (--replace takes the vault's value)"
-        : s.action === "edited-kept"
-          ? " — no longer in the vault, but edited here, so left as is"
-          : "";
+      s.action === "conflict" && s.deletedHere
+        ? " — removed here after big-brain set it (--replace adds it back)"
+        : s.action === "conflict"
+          ? " — set differently here (--replace takes the vault's value)"
+          : s.action === "edited-kept"
+            ? " — no longer in the vault, but edited here, so left as is"
+            : s.action === "forget"
+              ? " — no longer managed"
+              : "";
     console.log(
       `  ${SETTING_MARKS[s.action] ?? " "} ${tilde(report.settingsFile)}: ${leafLabel(s.leaf)}${note}`,
     );
