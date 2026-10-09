@@ -113,13 +113,31 @@ export interface AgentPaths {
   backupRoot: string;
 }
 
+/**
+ * The real location of a path, even if its last parts do not exist yet:
+ * resolve the deepest existing ancestor through symlinks and append the rest.
+ * Two spellings of the same folder then share one identity.
+ */
+export function canonicalPath(p: string): string {
+  const rest: string[] = [];
+  let cur = path.resolve(p);
+  while (!fs.existsSync(cur)) {
+    const parent = path.dirname(cur);
+    if (parent === cur) return path.resolve(p);
+    rest.unshift(path.basename(cur));
+    cur = parent;
+  }
+  return path.join(fs.realpathSync(cur), ...rest);
+}
+
 export function agentPaths(
   vaultDir: string,
   agentsFolder: string,
   agent: AgentDef,
   sys: SystemEnv = defaultSystem(),
 ): AgentPaths {
-  const home = path.resolve(sys.env[agent.homeEnv] || path.join(sys.userHome, agent.defaultHome));
+  const home = canonicalPath(sys.env[agent.homeEnv] || path.join(sys.userHome, agent.defaultHome));
+  const vault = canonicalPath(vaultDir);
   const stateRoot = path.join(
     sys.env.XDG_STATE_HOME || path.join(sys.userHome, ".local", "state"),
     "big-brain",
@@ -127,9 +145,9 @@ export function agentPaths(
   const homeKey = crypto.createHash("sha256").update(home).digest("hex").slice(0, 12);
   return {
     agent,
-    vault: path.resolve(vaultDir),
+    vault,
     home,
-    profile: path.resolve(vaultDir, agentsFolder, agent.name),
+    profile: path.join(vault, agentsFolder, agent.name),
     stateFile: path.join(stateRoot, "agents", `${agent.name}-${homeKey}.json`),
     backupRoot: path.join(stateRoot, "backups", agent.name),
   };
@@ -742,6 +760,30 @@ function readText(file: string): string | null {
   }
 }
 
+/** Remove a scratch tree, best effort: make folders writable if needed, never throw. */
+function removeTree(dir: string): void {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch {
+    const unlock = (d: string) => {
+      try {
+        fs.chmodSync(d, 0o700);
+        for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+          if (e.isDirectory()) unlock(path.join(d, e.name));
+        }
+      } catch {
+        // ignore
+      }
+    };
+    unlock(dir);
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // leave it; it is a scratch folder big-brain never reads
+    }
+  }
+}
+
 /** Write via a temp file in the same directory and rename, keeping the mode. */
 function atomicWrite(file: string, text: string): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -816,7 +858,7 @@ class Backup {
     const to = path.join(this.dir, "files", rel);
     fs.mkdirSync(path.dirname(to), { recursive: true });
     if (mode === "move") fs.renameSync(from, to);
-    else fs.cpSync(from, to, { recursive: true, preserveTimestamps: true });
+    else fs.cpSync(from, to, { recursive: true, preserveTimestamps: true, dereference: true });
     this.taken.push({ rel, backup: to, mode });
     this.writeManifest();
     return to;
@@ -877,6 +919,9 @@ export function planInstall(p: AgentPaths, opts: InstallOptions = {}) {
   const links = entries.map((e) => planLink(p, e, Boolean(opts.replace)));
 
   const fragmentFile = path.join(p.profile, p.agent.settingsFile);
+  if (fs.lstatSync(fragmentFile, { throwIfNoEntry: false })?.isSymbolicLink()) {
+    throw new Error(`Symlinks are not allowed in an agent profile: ${p.agent.settingsFile}`);
+  }
   const fragmentText = readText(fragmentFile);
   const wanted =
     fragmentText === null
@@ -891,7 +936,10 @@ export function planInstall(p: AgentPaths, opts: InstallOptions = {}) {
         );
 
   const settingsFile = path.join(p.home, p.agent.settingsFile);
-  const settingsText = readText(settingsFile) ?? "";
+  // A settings file kept in a dotfiles repo is often a symlink: read and write
+  // the file it points to, so the link itself is never replaced.
+  const settingsWrite = settingsTarget(settingsFile);
+  const settingsText = readText(settingsWrite) ?? "";
   const current = parseSettings(settingsText, p.agent.format, settingsFile);
   const state = readState(p);
   const settings = planSettings(current, wanted, state.settings, Boolean(opts.replace));
@@ -905,12 +953,36 @@ export function planInstall(p: AgentPaths, opts: InstallOptions = {}) {
   }
 
   const linkedNow = new Set(entries.filter((e) => e.kind !== "bundled-skill").map((e) => e.rel));
-  const stale = state.links.filter((rel) => {
-    if (linkedNow.has(rel)) return false;
-    const target = readLinkAbs(path.join(p.home, rel));
-    return target?.startsWith(`${p.profile}${path.sep}`) ?? false;
-  });
-  return { entries, links, settings, settingsFile, settingsText, newSettingsText, stale, state };
+  const stale = state.links.filter((rel) => isStaleLink(p, rel, linkedNow));
+  return {
+    entries,
+    links,
+    settings,
+    settingsFile,
+    settingsWrite,
+    settingsText,
+    newSettingsText,
+    stale,
+    state,
+  };
+}
+
+/** A link from an earlier install whose vault source is gone, reachable without leaving the home. */
+function isStaleLink(p: AgentPaths, rel: string, linkedNow: Set<string>): boolean {
+  if (linkedNow.has(rel) || parentProblem(p.home, rel)) return false;
+  const target = readLinkAbs(path.join(p.home, rel));
+  return target?.startsWith(`${p.profile}${path.sep}`) ?? false;
+}
+
+/** Where to read and write a settings file: through a symlink to its target. */
+function settingsTarget(file: string): string {
+  const st = fs.lstatSync(file, { throwIfNoEntry: false });
+  if (!st?.isSymbolicLink()) return file;
+  try {
+    return fs.realpathSync(file);
+  } catch {
+    throw new Error(`${file} is a symlink to a file that does not exist`);
+  }
 }
 
 export function installAgent(p: AgentPaths, opts: InstallOptions = {}): InstallReport {
@@ -937,6 +1009,7 @@ export function installAgent(p: AgentPaths, opts: InstallOptions = {}): InstallR
   // already done are undone in reverse so the machine is not left half-changed.
   const backup = new Backup(p.home, p.backupRoot);
   const undo: (() => void)[] = [];
+  const staging = path.join(p.home, `.big-brain-staging-${process.pid}`);
   try {
     for (const lp of plan.links) {
       const dst = path.join(p.home, lp.entry.rel);
@@ -944,7 +1017,12 @@ export function installAgent(p: AgentPaths, opts: InstallOptions = {}): InstallR
       if (lp.action === "replace") backup.take(lp.entry.rel, "move");
       fs.mkdirSync(path.dirname(dst), { recursive: true });
       if (lp.entry.kind === "bundled-skill") {
-        fs.cpSync(lp.entry.src, dst, { recursive: true });
+        // Copy into a staging folder (not a skill root), then rename into
+        // place: a failed copy never leaves a half-written skill behind.
+        const staged = path.join(staging, path.basename(dst));
+        fs.mkdirSync(staging, { recursive: true });
+        fs.cpSync(lp.entry.src, staged, { recursive: true });
+        fs.renameSync(staged, dst);
         undo.push(() => fs.rmSync(dst, { recursive: true, force: true }));
       } else {
         fs.symlinkSync(lp.entry.src, dst);
@@ -954,21 +1032,25 @@ export function installAgent(p: AgentPaths, opts: InstallOptions = {}): InstallR
 
     if (plan.newSettingsText !== null) {
       // Refuse if the settings changed while we were planning.
-      if ((readText(plan.settingsFile) ?? "") !== plan.settingsText) {
+      if ((readText(plan.settingsWrite) ?? "") !== plan.settingsText) {
         throw new Error(`${plan.settingsFile} changed during install; run it again`);
       }
-      const existed = fs.existsSync(plan.settingsFile);
+      const existed = fs.existsSync(plan.settingsWrite);
       if (existed) backup.take(p.agent.settingsFile, "copy");
-      atomicWrite(plan.settingsFile, plan.newSettingsText);
+      atomicWrite(plan.settingsWrite, plan.newSettingsText);
       undo.push(() =>
         existed
-          ? atomicWrite(plan.settingsFile, plan.settingsText)
-          : fs.unlinkSync(plan.settingsFile),
+          ? atomicWrite(plan.settingsWrite, plan.settingsText)
+          : fs.unlinkSync(plan.settingsWrite),
       );
     }
 
     if (opts.prune) {
+      const linkedNow = new Set(
+        plan.links.filter((l) => l.entry.kind !== "bundled-skill").map((l) => l.entry.rel),
+      );
       for (const rel of plan.stale) {
+        if (!isStaleLink(p, rel, linkedNow)) continue; // re-checked right before deleting
         const dst = path.join(p.home, rel);
         const target = fs.readlinkSync(dst);
         fs.unlinkSync(dst);
@@ -1004,6 +1086,8 @@ export function installAgent(p: AgentPaths, opts: InstallOptions = {}): InstallR
     }
     backup.restore();
     throw new Error(`Install failed and was rolled back: ${(err as Error).message}`);
+  } finally {
+    removeTree(staging);
   }
   report.backupDir = backup.used ? backup.dir : null;
   return report;
@@ -1138,12 +1222,16 @@ export function saveToProfile(
   const fragmentFile = path.join(p.profile, p.agent.settingsFile);
   let fragmentText: string | null = null;
   const savedLeaves = new Map<string, Json>();
+  const retired = new Set<string>();
   if (settingKeys.length > 0) {
     const current = parseSettings(
-      readText(path.join(p.home, p.agent.settingsFile)) ?? "",
+      readText(settingsTarget(path.join(p.home, p.agent.settingsFile))) ?? "",
       p.agent.format,
       p.agent.settingsFile,
     );
+    if (fs.lstatSync(fragmentFile, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      throw new Error(`Symlinks are not allowed in an agent profile: ${p.agent.settingsFile}`);
+    }
     const oldText = readText(fragmentFile) ?? "";
     const fragment = parseSettings(oldText, p.agent.format, `vault ${p.agent.settingsFile}`);
     const added: Record<string, Json> = {};
@@ -1159,7 +1247,21 @@ export function saveToProfile(
       result.settings.push({ key, value });
     }
     for (const [id, value] of fragmentLeaves(added, p.agent)) savedLeaves.set(id, value);
-    const plans = planSettings(fragment, savedLeaves, {}, true);
+    // A saved key replaces its whole subtree: parts removed on this machine
+    // must leave the vault too, and stop being tracked here.
+    const prefixes = settingKeys.map((k) => k.split(".").filter(Boolean));
+    const under = (id: string) => {
+      const leaf = parseLeafId(id);
+      return leaf.kind === "key" && prefixes.some((pre) => pre.every((k, i) => leaf.path[i] === k));
+    };
+    const stale: Record<string, Json> = {};
+    for (const [id, value] of fragmentLeaves(fragment, p.agent)) {
+      if (under(id) && !savedLeaves.has(id)) stale[id] = value;
+    }
+    for (const id of Object.keys(readState(p).settings)) {
+      if (under(id) && !savedLeaves.has(id)) retired.add(id);
+    }
+    const plans = planSettings(fragment, savedLeaves, stale, true);
     if (p.agent.format === "json") {
       fragmentText = `${JSON.stringify(applySettingPlans(fragment, plans), null, 2)}\n`;
     } else {
@@ -1176,22 +1278,27 @@ export function saveToProfile(
   const backup = new Backup(p.home, p.backupRoot);
   const undo: (() => void)[] = [];
   const state = readState(p);
+  const scratch = path.join(p.profile, `.big-brain-tmp-${process.pid}`);
   try {
-    for (const job of jobs) {
+    for (const [n, job] of jobs.entries()) {
       if (!job) continue;
-      const previous = fs.existsSync(job.target)
-        ? fs.mkdtempSync(path.join(os.tmpdir(), "big-brain-vault-prev-"))
-        : null;
-      if (previous) {
-        fs.cpSync(job.target, path.join(previous, "x"), { recursive: true });
-        fs.rmSync(job.target, { recursive: true, force: true });
+      // Stage the new copy and move any old one aside, both by rename inside
+      // the profile's scratch folder (never scanned as skills or files): the
+      // vault never holds a half-deleted or half-copied entry.
+      fs.mkdirSync(scratch, { recursive: true });
+      const staged = path.join(scratch, `new-${n}`);
+      fs.cpSync(job.abs, staged, { recursive: true, preserveTimestamps: true });
+      if (fs.existsSync(job.target)) {
+        const aside = path.join(scratch, `old-${n}`);
+        fs.renameSync(job.target, aside);
+        undo.push(() => {
+          fs.rmSync(job.target, { recursive: true, force: true });
+          fs.renameSync(aside, job.target);
+        });
       }
-      undo.push(() => {
-        fs.rmSync(job.target, { recursive: true, force: true });
-        if (previous) fs.cpSync(path.join(previous, "x"), job.target, { recursive: true });
-      });
       fs.mkdirSync(path.dirname(job.target), { recursive: true });
-      fs.cpSync(job.abs, job.target, { recursive: true, preserveTimestamps: true });
+      fs.renameSync(staged, job.target);
+      undo.push(() => fs.rmSync(job.target, { recursive: true, force: true }));
       backup.take(job.rel, "move");
       fs.symlinkSync(job.target, job.abs);
       undo.push(() => fs.unlinkSync(job.abs));
@@ -1207,6 +1314,7 @@ export function saveToProfile(
         oldFragment === null ? fs.unlinkSync(fragmentFile) : atomicWrite(fragmentFile, oldFragment),
       );
       result.touched.push(toRel(path.relative(vaultDir, fragmentFile)));
+      for (const id of retired) delete state.settings[id];
       for (const [id, value] of savedLeaves) state.settings[id] = clone(value);
     }
     state.links.sort();
@@ -1221,6 +1329,8 @@ export function saveToProfile(
     }
     backup.restore();
     throw new Error(`Save failed and was rolled back: ${(err as Error).message}`);
+  } finally {
+    removeTree(scratch);
   }
   result.backupDir = backup.used ? backup.dir : null;
   return result;
