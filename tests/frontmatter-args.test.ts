@@ -24,11 +24,16 @@ describe("parseFrontmatterValue", () => {
     expect(parseFrontmatterValue("{owner: me, n: 2}")).toEqual({ owner: "me", n: 2 });
   });
 
-  it("treats null, ~, and nothing as null (which deletes the key)", () => {
+  it("treats YAML's null spellings and nothing as null (which deletes the key)", () => {
     expect(parseFrontmatterValue("null")).toBeNull();
+    expect(parseFrontmatterValue("Null")).toBeNull();
     expect(parseFrontmatterValue("NULL")).toBeNull();
     expect(parseFrontmatterValue("~")).toBeNull();
     expect(parseFrontmatterValue("")).toBeNull();
+  });
+
+  it("keeps other casings of null as text, as YAML does", () => {
+    expect(parseFrontmatterValue("nUlL")).toBe("nUlL");
   });
 
   it("keeps text that YAML would silently reinterpret", () => {
@@ -50,6 +55,12 @@ describe("parseFrontmatterAssignments", () => {
   it("rejects arguments without a key", () => {
     expect(() => parseFrontmatterAssignments(["status"])).toThrow(/want key=value/);
     expect(() => parseFrontmatterAssignments(["=paused"])).toThrow(/want key=value/);
+  });
+
+  it("stores __proto__ as a key instead of replacing the prototype", () => {
+    expect(Object.entries(parseFrontmatterAssignments(["__proto__=null"]))).toEqual([
+      ["__proto__", null],
+    ]);
   });
 });
 
@@ -76,6 +87,7 @@ describe("frontmatter assignments applied to a note", () => {
         "status=dropped",
         "tags=[work, llm]",
         "due=2026-11-01",
+        "owner=nUlL",
         "area=null",
       ]),
     );
@@ -83,6 +95,7 @@ describe("frontmatter assignments applied to a note", () => {
     expect(fm.status).toBe("dropped");
     expect(fm.tags).toEqual(["work", "llm"]);
     expect(fm.due).toBe("2026-11-01");
+    expect(fm.owner).toBe("nUlL");
     expect(fm).not.toHaveProperty("area");
   });
 });

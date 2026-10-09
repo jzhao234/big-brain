@@ -43,16 +43,19 @@ export function stringifyNote(body: string, data: Record<string, unknown>): stri
   return matter.stringify(body, data, OPTIONS);
 }
 
+// YAML's own null spellings, plus nothing at all. `nUlL` is a string in YAML.
+const NULL_TEXT = new Set(["", "~", "null", "Null", "NULL"]);
+
 /**
  * Read one command-line frontmatter value the way the vault reads `key: value`
- * (same schema, so `2026-01-05` stays a string). `null`, `~`, or nothing means
- * null, which deletes the key. Text that YAML would turn into something the
- * user didn't type as such stays plain text: `Note: see X` is not a mapping,
- * `- a` is not a list, and `#work` is not a comment.
+ * (same schema, so `2026-01-05` stays a string). `null`, `Null`, `NULL`, `~`,
+ * or nothing means null, which deletes the key. Text that YAML would turn into
+ * something the user didn't type as such stays plain text: `Note: see X` is
+ * not a mapping, `- a` is not a list, and `#work` is not a comment.
  */
 export function parseFrontmatterValue(text: string): unknown {
   const t = text.trim();
-  if (t === "" || t === "~" || t.toLowerCase() === "null") return null;
+  if (NULL_TEXT.has(t)) return null;
   let value: unknown;
   try {
     value = yaml.load(t, { schema: SCHEMA });
@@ -67,7 +70,8 @@ export function parseFrontmatterValue(text: string): unknown {
 
 /** Parse `key=value` arguments into frontmatter updates (split at the first `=`). */
 export function parseFrontmatterAssignments(args: string[]): Record<string, unknown> {
-  const updates: Record<string, unknown> = {};
+  // No prototype, so `__proto__=…` is stored as a key instead of replacing the prototype.
+  const updates: Record<string, unknown> = Object.create(null);
   for (const arg of args) {
     const eq = arg.indexOf("=");
     const key = eq === -1 ? "" : arg.slice(0, eq).trim();
