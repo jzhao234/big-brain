@@ -8,6 +8,7 @@ import { resolveVault } from "../core/config.js";
 import { getDailyNote, logToDaily } from "../core/daily.js";
 import { runDoctor } from "../core/doctor.js";
 import { SemanticIndex, createEmbeddingProvider, hybridSearch } from "../core/embeddings.js";
+import { parseFrontmatterAssignments } from "../core/frontmatter.js";
 import { renderOverview, vaultOverview } from "../core/overview.js";
 import { createProject, listProjects, setProjectStatus } from "../core/projects.js";
 import { relatedNotes } from "../core/related.js";
@@ -237,6 +238,60 @@ program
         unique: true,
       });
       console.log(pc.green(`Captured to ${note.path}`));
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+program
+  .command("append <ref> <text...>")
+  .description(
+    'append markdown to a note (quote a multi-word note name; put -- before text that starts with "-")',
+  )
+  .option("-H, --heading <heading>", "section to append under, e.g. Log (created if missing)")
+  .action((ref: string, words: string[], opts: { heading?: string }) => {
+    try {
+      const vault = openVault();
+      const note = vault.appendToNote(ref, words.join(" "), opts.heading);
+      console.log(
+        pc.green(`Appended to ${note.path}${opts.heading ? ` under '${opts.heading}'` : ""}`),
+      );
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+program
+  .command("frontmatter <ref> <assignments...>")
+  .description("set frontmatter keys: key=value (read as YAML); key=null removes the key")
+  .action((ref: string, assignments: string[]) => {
+    try {
+      const updates = parseFrontmatterAssignments(assignments);
+      const vault = openVault();
+      const note = vault.updateFrontmatter(ref, updates);
+      const set = Object.keys(updates).filter((k) => updates[k] !== null);
+      const removed = Object.keys(updates).filter((k) => updates[k] === null);
+      const parts = [
+        set.length ? `set ${set.join(", ")}` : "",
+        removed.length ? `removed ${removed.join(", ")}` : "",
+      ].filter(Boolean);
+      console.log(pc.green(`Updated frontmatter of ${note.path} (${parts.join("; ")})`));
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+program
+  .command("archive <ref...>")
+  .description("move a note into the archive folder (the non-destructive alternative to deleting)")
+  .action((refWords: string[]) => {
+    try {
+      const vault = openVault();
+      const ref = refWords.join(" ");
+      const existing = vault.get(ref);
+      if (existing?.archived) return console.log(pc.dim(`Already archived: ${existing.path}`));
+      const note = vault.archiveNote(ref);
+      console.log(pc.green(`Archived to ${note.path}`));
     } catch (err) {
       fail(err);
     }

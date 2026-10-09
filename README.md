@@ -111,6 +111,9 @@ The whole point is that you never re-feed context. The assistant **loads** a sma
 | Add a task | *"add a task to project Y"* | `big-brain task add "…" --note Y` |
 | Finish a task | *"mark that done"* | `big-brain task done <id>` |
 | Start a project | *"new project: …"* | `big-brain project new "…"` |
+| Add to a note | *"add that to the Auth note's Log"* | `big-brain append "Auth" --heading Log -- "- …"` |
+| Change metadata | *"set Auth's due date to …"* | `big-brain frontmatter "Auth" due=2026-11-01` |
+| Retire a note | *"archive that note"* | `big-brain archive "Auth"` |
 
 **Review** — `/weekly` runs a guided pass: triage the inbox, prune projects, reschedule overdue tasks, fix broken links, and **consolidate** — `big-brain doctor` flags bloated notes and near-duplicates, and the review proposes splits/merges/stale-fact pruning for your approval. Capture and search keep a brain useful; consolidation keeps it trustworthy.
 
@@ -210,10 +213,12 @@ big-brain new <title>           create a note           big-brain links <note>
 big-brain related <note>        related notes + why     big-brain tags
 big-brain capture <text>        quick capture           big-brain doctor
 big-brain daily [--log "..."]   daily note / journal    big-brain index [--status|--rebuild]
+big-brain append <note> <text>  append [--heading H]    big-brain frontmatter <note> k=v ...
+big-brain archive <note>        archive (non-destructive delete)
 big-brain install-skills        add Claude Code skills  big-brain mcp   run the MCP server
 ```
 
-Every list command takes `--json` for scripting.
+Every list command takes `--json` for scripting. Put `--` before `append` text that starts with `-` (a list item), or it is read as an option. `frontmatter` reads each value as YAML, like `key: value` in the file: `tags=[work, llm]` is a list, `due=2026-11-01` stays a date string, and `key=null` (or `key=`) removes the key.
 
 ## Design principles
 
