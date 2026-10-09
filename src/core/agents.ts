@@ -14,6 +14,7 @@
  * three-way (fragment, last applied, current), so local edits are reported,
  * never overwritten.
  */
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -97,11 +98,16 @@ export function defaultSystem(): SystemEnv {
 
 export interface AgentPaths {
   agent: AgentDef;
+  /** The vault this profile belongs to. */
+  vault: string;
   /** The agent's home on this machine (e.g. ~/.claude). */
   home: string;
   /** The agent's profile folder in the vault (agents/<name>). */
   profile: string;
-  /** big-brain's record of what it applied for this agent on this machine. */
+  /**
+   * big-brain's record of what it applied to this home. One file per home,
+   * so two homes (CLAUDE_CONFIG_DIR) never share a baseline.
+   */
   stateFile: string;
   /** Root for backups; always outside every agent home. */
   backupRoot: string;
@@ -113,16 +119,18 @@ export function agentPaths(
   agent: AgentDef,
   sys: SystemEnv = defaultSystem(),
 ): AgentPaths {
-  const home = sys.env[agent.homeEnv] || path.join(sys.userHome, agent.defaultHome);
+  const home = path.resolve(sys.env[agent.homeEnv] || path.join(sys.userHome, agent.defaultHome));
   const stateRoot = path.join(
     sys.env.XDG_STATE_HOME || path.join(sys.userHome, ".local", "state"),
     "big-brain",
   );
+  const homeKey = crypto.createHash("sha256").update(home).digest("hex").slice(0, 12);
   return {
     agent,
-    home: path.resolve(home),
+    vault: path.resolve(vaultDir),
+    home,
     profile: path.resolve(vaultDir, agentsFolder, agent.name),
-    stateFile: path.join(stateRoot, "agents", `${agent.name}.json`),
+    stateFile: path.join(stateRoot, "agents", `${agent.name}-${homeKey}.json`),
     backupRoot: path.join(stateRoot, "backups", agent.name),
   };
 }
@@ -342,9 +350,36 @@ export interface LinkPlan {
   entry: Entry;
   state: LinkState;
   action: LinkAction;
+  /** Why a conflict can't be resolved with --replace (e.g. a parent folder is a link). */
+  reason?: string;
+}
+
+/**
+ * Every folder between the agent home and `rel` must be a real directory (or
+ * not exist yet): writing through a symlinked parent could touch files
+ * outside the home, and a regular file in the way would fail midway.
+ */
+export function parentProblem(home: string, rel: string): string | null {
+  const parts = rel.split("/").slice(0, -1);
+  let cur = home;
+  for (let i = 0; i < parts.length; i++) {
+    cur = path.join(cur, parts[i] as string);
+    let st: fs.Stats;
+    try {
+      st = fs.lstatSync(cur);
+    } catch {
+      return null; // missing: everything below will be created
+    }
+    const shown = parts.slice(0, i + 1).join("/");
+    if (st.isSymbolicLink()) return `${shown} is a symlink`;
+    if (!st.isDirectory()) return `${shown} is a file, not a folder`;
+  }
+  return null;
 }
 
 function planLink(p: AgentPaths, entry: Entry, replace: boolean): LinkPlan {
+  const parent = parentProblem(p.home, entry.rel);
+  if (parent) return { entry, state: "occupied", action: "conflict", reason: parent };
   const state = entryState(p, entry);
   let action: LinkAction;
   if (entry.kind === "bundled-skill") {
@@ -529,8 +564,9 @@ export type SettingAction =
   | "add" // missing here
   | "update" // vault value changed and this machine still has the last applied one
   | "remove" // dropped from the vault and unedited here
-  | "conflict" // differs here and was not set by big-brain (or edited locally)
-  | "edited-kept"; // dropped from the vault but edited here: left alone
+  | "conflict" // differs here, was deleted here, or was never set by big-brain
+  | "edited-kept" // dropped from the vault but edited here: left alone
+  | "forget"; // gone from both the vault and this machine: stop tracking it
 
 export interface SettingPlan {
   id: string;
@@ -538,6 +574,8 @@ export interface SettingPlan {
   action: SettingAction;
   current: Json | undefined;
   wanted: Json | undefined;
+  /** For a conflict: the value was removed on this machine after big-brain set it. */
+  deletedHere?: boolean;
 }
 
 /**
@@ -558,17 +596,22 @@ export function planSettings(
     const want = wanted.get(id);
     const last = Object.hasOwn(lastApplied, id) ? lastApplied[id] : undefined;
     let action: SettingAction;
+    let deletedHere = false;
     if (want !== undefined) {
-      if (cur === undefined) action = "add";
-      else if (deepEqual(cur, want)) action = "ok";
+      if (cur === undefined) {
+        // Never applied here: add it. Applied before and now missing: someone
+        // removed it on this machine, so that is a local edit to respect.
+        deletedHere = last !== undefined && !replace;
+        action = deletedHere ? "conflict" : "add";
+      } else if (deepEqual(cur, want)) action = "ok";
       else if (replace || (last !== undefined && deepEqual(cur, last))) action = "update";
       else action = "conflict";
     } else if (cur === undefined) {
-      continue; // was managed, already gone: just forget it
+      action = "forget";
     } else {
       action = last !== undefined && deepEqual(cur, last) ? "remove" : "edited-kept";
     }
-    plans.push({ id, leaf, action, current: cur, wanted: want });
+    plans.push({ id, leaf, action, current: cur, wanted: want, deletedHere });
   }
   return plans;
 }
@@ -717,6 +760,8 @@ function atomicWrite(file: string, text: string): void {
 // State: what big-brain applied on this machine
 
 export interface AgentState {
+  /** The agent home and vault this record belongs to. */
+  home: string;
   vault: string;
   /** Linked entries (relative to the agent home) from the last install. */
   links: string[];
@@ -724,50 +769,82 @@ export interface AgentState {
   settings: Record<string, Json>;
 }
 
+/**
+ * The record for this home and vault. A record written for another home or
+ * vault is ignored, so its baseline can never remove or overwrite settings here.
+ */
 export function readState(p: AgentPaths): AgentState {
+  const empty: AgentState = { home: p.home, vault: p.vault, links: [], settings: {} };
   const text = readText(p.stateFile);
-  if (text === null) return { vault: "", links: [], settings: {} };
+  if (text === null) return empty;
   const raw = JSON.parse(text) as Partial<AgentState>;
-  return { vault: raw.vault ?? "", links: raw.links ?? [], settings: raw.settings ?? {} };
+  if (raw.home !== p.home || raw.vault !== p.vault) return empty;
+  return { ...empty, links: raw.links ?? [], settings: raw.settings ?? {} };
 }
 
 function writeState(p: AgentPaths, state: AgentState): void {
-  atomicWrite(p.stateFile, `${JSON.stringify(state, null, 2)}\n`);
+  atomicWrite(
+    p.stateFile,
+    `${JSON.stringify({ ...state, home: p.home, vault: p.vault }, null, 2)}\n`,
+  );
 }
 
 // ---------------------------------------------------------------------------
 // Backups (outside every agent home, so a backed-up skill is never discovered)
 
+/**
+ * One backup per run: <backupRoot>/<stamp>/files/<rel> holds what was there,
+ * and <stamp>/manifest.json (rewritten after every step, so a crash still
+ * leaves a record) says where each item came from.
+ */
 class Backup {
   readonly dir: string;
-  private moved: { rel: string; backup: string }[] = [];
-  constructor(p: AgentPaths, now = new Date()) {
+  private taken: { rel: string; backup: string; mode: "move" | "copy" }[] = [];
+  constructor(
+    private readonly home: string,
+    backupRoot: string,
+    now = new Date(),
+  ) {
     const stamp = now.toISOString().replace(/[:.]/g, "-");
-    let dir = path.join(p.backupRoot, stamp);
-    for (let n = 2; fs.existsSync(dir); n++) dir = path.join(p.backupRoot, `${stamp}-${n}`);
+    let dir = path.join(backupRoot, stamp);
+    for (let n = 2; fs.existsSync(dir); n++) dir = path.join(backupRoot, `${stamp}-${n}`);
     this.dir = dir;
   }
   /** Move (or copy, for files we keep using) something out of the agent home. */
-  take(home: string, rel: string, mode: "move" | "copy"): string {
-    const from = path.join(home, rel);
-    const to = path.join(this.dir, rel);
+  take(rel: string, mode: "move" | "copy"): string {
+    const from = path.join(this.home, rel);
+    const to = path.join(this.dir, "files", rel);
     fs.mkdirSync(path.dirname(to), { recursive: true });
     if (mode === "move") fs.renameSync(from, to);
     else fs.cpSync(from, to, { recursive: true, preserveTimestamps: true });
-    this.moved.push({ rel, backup: to });
+    this.taken.push({ rel, backup: to, mode });
+    this.writeManifest();
     return to;
   }
-  finish(home: string): string | null {
-    if (this.moved.length === 0) return null;
+  /** Put moved items back (after removing the link that replaced them). Best effort. */
+  restore(): void {
+    for (const t of [...this.taken].reverse()) {
+      if (t.mode !== "move") continue;
+      const original = path.join(this.home, t.rel);
+      try {
+        if (fs.lstatSync(original, { throwIfNoEntry: false })?.isSymbolicLink()) {
+          fs.unlinkSync(original);
+        }
+        if (!fs.existsSync(original)) fs.renameSync(t.backup, original);
+      } catch {
+        // leave it in the backup; the manifest says where it belongs
+      }
+    }
+  }
+  private writeManifest(): void {
     const manifest = {
-      home,
-      restore: this.moved.map((m) => ({ from: m.backup, to: path.join(home, m.rel) })),
+      home: this.home,
+      restore: this.taken.map((t) => ({ from: t.backup, to: path.join(this.home, t.rel) })),
     };
-    fs.writeFileSync(
-      path.join(this.dir, "manifest.json"),
-      `${JSON.stringify(manifest, null, 2)}\n`,
-    );
-    return this.dir;
+    atomicWrite(path.join(this.dir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+  }
+  get used(): boolean {
+    return this.taken.length > 0;
   }
 }
 
@@ -856,48 +933,79 @@ export function installAgent(p: AgentPaths, opts: InstallOptions = {}): InstallR
   };
   if (opts.dryRun) return report;
 
-  const backup = new Backup(p);
-  for (const lp of plan.links) {
-    const dst = path.join(p.home, lp.entry.rel);
-    if (lp.action === "none" || lp.action === "keep" || lp.action === "conflict") continue;
-    if (lp.action === "replace") backup.take(p.home, lp.entry.rel, "move");
-    fs.mkdirSync(path.dirname(dst), { recursive: true });
-    if (lp.entry.kind === "bundled-skill") fs.cpSync(lp.entry.src, dst, { recursive: true });
-    else fs.symlinkSync(lp.entry.src, dst);
-  }
-
-  if (plan.newSettingsText !== null) {
-    // Refuse if the settings changed while we were planning.
-    if ((readText(plan.settingsFile) ?? "") !== plan.settingsText) {
-      throw new Error(`${plan.settingsFile} changed during install; run it again`);
+  // Apply. Each step registers how to undo it; if any step fails, the steps
+  // already done are undone in reverse so the machine is not left half-changed.
+  const backup = new Backup(p.home, p.backupRoot);
+  const undo: (() => void)[] = [];
+  try {
+    for (const lp of plan.links) {
+      const dst = path.join(p.home, lp.entry.rel);
+      if (lp.action === "none" || lp.action === "keep" || lp.action === "conflict") continue;
+      if (lp.action === "replace") backup.take(lp.entry.rel, "move");
+      fs.mkdirSync(path.dirname(dst), { recursive: true });
+      if (lp.entry.kind === "bundled-skill") {
+        fs.cpSync(lp.entry.src, dst, { recursive: true });
+        undo.push(() => fs.rmSync(dst, { recursive: true, force: true }));
+      } else {
+        fs.symlinkSync(lp.entry.src, dst);
+        undo.push(() => fs.unlinkSync(dst));
+      }
     }
-    if (fs.existsSync(plan.settingsFile)) backup.take(p.home, p.agent.settingsFile, "copy");
-    atomicWrite(plan.settingsFile, plan.newSettingsText);
-  }
 
-  if (opts.prune) {
-    for (const rel of plan.stale) {
-      fs.unlinkSync(path.join(p.home, rel));
-      report.pruned.push(rel);
+    if (plan.newSettingsText !== null) {
+      // Refuse if the settings changed while we were planning.
+      if ((readText(plan.settingsFile) ?? "") !== plan.settingsText) {
+        throw new Error(`${plan.settingsFile} changed during install; run it again`);
+      }
+      const existed = fs.existsSync(plan.settingsFile);
+      if (existed) backup.take(p.agent.settingsFile, "copy");
+      atomicWrite(plan.settingsFile, plan.newSettingsText);
+      undo.push(() =>
+        existed
+          ? atomicWrite(plan.settingsFile, plan.settingsText)
+          : fs.unlinkSync(plan.settingsFile),
+      );
     }
-  }
 
-  const settingsState: Record<string, Json> = { ...plan.state.settings };
-  for (const s of plan.settings) {
-    if (s.action === "ok" || s.action === "add" || s.action === "update") {
-      settingsState[s.id] = clone(s.wanted as Json);
-    } else if (s.action === "remove" || s.action === "edited-kept") delete settingsState[s.id];
+    if (opts.prune) {
+      for (const rel of plan.stale) {
+        const dst = path.join(p.home, rel);
+        const target = fs.readlinkSync(dst);
+        fs.unlinkSync(dst);
+        undo.push(() => fs.symlinkSync(target, dst));
+        report.pruned.push(rel);
+      }
+    }
+
+    const settingsState: Record<string, Json> = { ...plan.state.settings };
+    for (const s of plan.settings) {
+      if (s.action === "ok" || s.action === "add" || s.action === "update") {
+        settingsState[s.id] = clone(s.wanted as Json);
+      } else if (["remove", "edited-kept", "forget"].includes(s.action)) {
+        delete settingsState[s.id];
+      }
+    }
+    const links = plan.links
+      .filter((l) => l.entry.kind !== "bundled-skill" && l.action !== "conflict")
+      .map((l) => l.entry.rel);
+    const keptStale = opts.prune ? [] : plan.stale;
+    writeState(p, {
+      ...plan.state,
+      links: [...links, ...keptStale].sort(),
+      settings: settingsState,
+    });
+  } catch (err) {
+    for (const step of undo.reverse()) {
+      try {
+        step();
+      } catch {
+        // keep undoing the rest
+      }
+    }
+    backup.restore();
+    throw new Error(`Install failed and was rolled back: ${(err as Error).message}`);
   }
-  const links = plan.links
-    .filter((l) => l.entry.kind !== "bundled-skill" && l.action !== "conflict")
-    .map((l) => l.entry.rel);
-  const keptStale = opts.prune ? [] : plan.stale;
-  writeState(p, {
-    vault: path.dirname(path.dirname(p.profile)),
-    links: [...links, ...keptStale].sort(),
-    settings: settingsState,
-  });
-  report.backupDir = backup.finish(p.home);
+  report.backupDir = backup.used ? backup.dir : null;
   return report;
 }
 
@@ -988,13 +1096,20 @@ export function saveToProfile(
   const result: SaveResult = { saved: [], settings: [], touched: [], backupDir: null };
 
   // Validate everything before changing anything.
-  const jobs = rels.map((input) => {
-    const rel = normalizeRel(input);
-    const abs = path.join(p.home, rel);
-    if (!fs.existsSync(abs) && !fs.lstatSync(abs, { throwIfNoEntry: false })) {
-      throw new Error(`${rel} does not exist in ${p.home}`);
+  const wanted = [...new Set(rels.map(normalizeRel))].sort();
+  for (let i = 0; i < wanted.length; i++) {
+    for (let j = i + 1; j < wanted.length; j++) {
+      if ((wanted[j] as string).startsWith(`${wanted[i]}/`)) {
+        throw new Error(`${wanted[j]} is inside ${wanted[i]}; save one or the other`);
+      }
     }
-    const st = fs.lstatSync(abs);
+  }
+  const jobs = wanted.map((rel) => {
+    const parent = parentProblem(p.home, rel);
+    if (parent) throw new Error(`${rel}: ${parent}; refusing to read or write through it`);
+    const abs = path.join(p.home, rel);
+    const st = fs.lstatSync(abs, { throwIfNoEntry: false });
+    if (!st) throw new Error(`${rel} does not exist in ${p.home}`);
     if (st.isSymbolicLink()) {
       const target = readLinkAbs(abs);
       if (target?.startsWith(`${p.profile}${path.sep}`)) return null; // already saved
@@ -1014,22 +1129,24 @@ export function saveToProfile(
         `${toRel(path.relative(vaultDir, target))} already exists in the vault (use --force to overwrite)`,
       );
     }
-    return { rel, abs, target, isDir: st.isDirectory() };
+    return { rel, abs, target };
   });
 
+  // Settings: copy each key's current value into the fragment, and record it
+  // as applied in exactly the leaf form install uses, so the next install
+  // sees it as already in place (never as something to remove).
   const fragmentFile = path.join(p.profile, p.agent.settingsFile);
   let fragmentText: string | null = null;
+  const savedLeaves = new Map<string, Json>();
   if (settingKeys.length > 0) {
     const current = parseSettings(
       readText(path.join(p.home, p.agent.settingsFile)) ?? "",
       p.agent.format,
       p.agent.settingsFile,
     );
-    const fragment = parseSettings(
-      readText(fragmentFile) ?? "",
-      p.agent.format,
-      `vault ${p.agent.settingsFile}`,
-    );
+    const oldText = readText(fragmentFile) ?? "";
+    const fragment = parseSettings(oldText, p.agent.format, `vault ${p.agent.settingsFile}`);
+    const added: Record<string, Json> = {};
     for (const key of settingKeys) {
       const keyPath = key.split(".").filter(Boolean);
       if (keyPath.length === 0) throw new Error(`Empty setting key: ${key}`);
@@ -1038,42 +1155,73 @@ export function saveToProfile(
       }
       const value = getAt(current, { kind: "key", path: keyPath });
       if (value === undefined) throw new Error(`${key} is not set in ${p.agent.settingsFile}`);
-      setAt(fragment, { kind: "key", path: keyPath }, clone(value));
+      setAt(added, { kind: "key", path: keyPath }, clone(value));
       result.settings.push({ key, value });
     }
-    fragmentLeaves(fragment, p.agent); // validates the result
-    fragmentText =
-      p.agent.format === "json"
-        ? `${JSON.stringify(fragment, null, 2)}\n`
-        : stringifyToml(fragment as never);
+    for (const [id, value] of fragmentLeaves(added, p.agent)) savedLeaves.set(id, value);
+    const plans = planSettings(fragment, savedLeaves, {}, true);
+    if (p.agent.format === "json") {
+      fragmentText = `${JSON.stringify(applySettingPlans(fragment, plans), null, 2)}\n`;
+    } else {
+      try {
+        fragmentText = editToml(oldText, plans); // keeps the fragment's comments
+      } catch {
+        fragmentText = stringifyToml(applySettingPlans(fragment, plans) as never);
+      }
+    }
+    fragmentLeaves(parseSettings(fragmentText, p.agent.format, "new fragment"), p.agent);
   }
 
-  const backup = new Backup(p);
+  // Apply, undoing completed steps if one fails.
+  const backup = new Backup(p.home, p.backupRoot);
+  const undo: (() => void)[] = [];
   const state = readState(p);
-  for (const job of jobs) {
-    if (!job) continue;
-    if (fs.existsSync(job.target)) fs.rmSync(job.target, { recursive: true, force: true });
-    fs.mkdirSync(path.dirname(job.target), { recursive: true });
-    fs.cpSync(job.abs, job.target, { recursive: true, preserveTimestamps: true });
-    backup.take(p.home, job.rel, "move");
-    fs.symlinkSync(job.target, job.abs);
-    result.saved.push({ rel: job.rel, vaultPath: job.target });
-    result.touched.push(toRel(path.relative(vaultDir, job.target)));
-    if (!state.links.includes(job.rel)) state.links.push(job.rel);
-  }
-  if (fragmentText !== null) {
-    checkVaultParents(vaultDir, fragmentFile);
-    atomicWrite(fragmentFile, fragmentText);
-    result.touched.push(toRel(path.relative(vaultDir, fragmentFile)));
-    for (const s of result.settings) {
-      state.settings[leafId({ kind: "key", path: s.key.split(".").filter(Boolean) })] = clone(
-        s.value,
-      );
+  try {
+    for (const job of jobs) {
+      if (!job) continue;
+      const previous = fs.existsSync(job.target)
+        ? fs.mkdtempSync(path.join(os.tmpdir(), "big-brain-vault-prev-"))
+        : null;
+      if (previous) {
+        fs.cpSync(job.target, path.join(previous, "x"), { recursive: true });
+        fs.rmSync(job.target, { recursive: true, force: true });
+      }
+      undo.push(() => {
+        fs.rmSync(job.target, { recursive: true, force: true });
+        if (previous) fs.cpSync(path.join(previous, "x"), job.target, { recursive: true });
+      });
+      fs.mkdirSync(path.dirname(job.target), { recursive: true });
+      fs.cpSync(job.abs, job.target, { recursive: true, preserveTimestamps: true });
+      backup.take(job.rel, "move");
+      fs.symlinkSync(job.target, job.abs);
+      undo.push(() => fs.unlinkSync(job.abs));
+      result.saved.push({ rel: job.rel, vaultPath: job.target });
+      result.touched.push(toRel(path.relative(vaultDir, job.target)));
+      if (!state.links.includes(job.rel)) state.links.push(job.rel);
     }
+    if (fragmentText !== null) {
+      checkVaultParents(vaultDir, fragmentFile);
+      const oldFragment = readText(fragmentFile);
+      atomicWrite(fragmentFile, fragmentText);
+      undo.push(() =>
+        oldFragment === null ? fs.unlinkSync(fragmentFile) : atomicWrite(fragmentFile, oldFragment),
+      );
+      result.touched.push(toRel(path.relative(vaultDir, fragmentFile)));
+      for (const [id, value] of savedLeaves) state.settings[id] = clone(value);
+    }
+    state.links.sort();
+    writeState(p, state);
+  } catch (err) {
+    for (const step of undo.reverse()) {
+      try {
+        step();
+      } catch {
+        // keep undoing the rest
+      }
+    }
+    backup.restore();
+    throw new Error(`Save failed and was rolled back: ${(err as Error).message}`);
   }
-  state.vault = vaultDir;
-  state.links.sort();
-  writeState(p, state);
-  result.backupDir = backup.finish(p.home);
+  result.backupDir = backup.used ? backup.dir : null;
   return result;
 }

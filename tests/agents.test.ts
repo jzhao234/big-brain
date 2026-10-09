@@ -138,7 +138,7 @@ describe("installAgent: links", () => {
     expect(backup.startsWith(path.join(root, "state", "big-brain", "backups", "claude"))).toBe(
       true,
     );
-    expect(fs.readFileSync(path.join(backup, "skills/learn/SKILL.md"), "utf8")).toBe(
+    expect(fs.readFileSync(path.join(backup, "files/skills/learn/SKILL.md"), "utf8")).toBe(
       "local version",
     );
     expect(
@@ -363,7 +363,7 @@ describe("saveToProfile", () => {
     expect(result.touched).toEqual(["agents/claude/files/statusline.sh"]);
     expect(fs.statSync(saved).mode & 0o777).toBe(0o755);
     expect(fs.readlinkSync(path.join(home("claude"), "statusline.sh"))).toBe(saved);
-    expect(fs.existsSync(path.join(result.backupDir as string, "statusline.sh"))).toBe(true);
+    expect(fs.existsSync(path.join(result.backupDir as string, "files/statusline.sh"))).toBe(true);
     expect(readState(paths("claude")).links).toContain("statusline.sh");
     // Saving again is a no-op, and a later install sees it as linked.
     expect(saveToProfile(paths("claude"), vaultDir, ["statusline.sh"], []).saved).toEqual([]);
@@ -449,5 +449,151 @@ describe("status and the vault scanner", () => {
     fs.writeFileSync(cfgFile, JSON.stringify({ ...cfg, folders: { agents: "setup/agents" } }));
     write(path.join(vaultDir, "setup/agents/claude/instructions.md"), "# rules");
     expect(new Vault(vaultDir).notes(true).some((n) => n.path.startsWith("setup/"))).toBe(false);
+  });
+});
+
+describe("regressions found in code review", () => {
+  const claudeSettings = (h = home("claude")) => path.join(h, "settings.json");
+  const readJson = (file: string) => JSON.parse(fs.readFileSync(file, "utf8"));
+  const fragment = (obj: unknown) => profile("claude", "settings.json", JSON.stringify(obj));
+
+  it("saving an object setting survives the next install", () => {
+    const statusLine = { type: "command", command: "mine.sh" };
+    write(claudeSettings(), JSON.stringify({ statusLine }));
+    saveToProfile(paths("claude"), vaultDir, [], ["statusLine"]);
+    const report = installAgent(paths("claude"));
+    expect(report.settings.map((s) => s.action)).toEqual(["ok", "ok"]);
+    expect(readJson(claudeSettings()).statusLine).toEqual(statusLine);
+  });
+
+  it("backs up a file named manifest.json without losing it", () => {
+    write(path.join(home("claude"), "manifest.json"), "original");
+    profile("claude", "files/manifest.json", "vault");
+    const report = installAgent(paths("claude"), { replace: true });
+    const dir = report.backupDir as string;
+    expect(fs.readFileSync(path.join(dir, "files/manifest.json"), "utf8")).toBe("original");
+    expect(readJson(path.join(dir, "manifest.json")).restore).toHaveLength(1);
+  });
+
+  it("never writes through a symlinked parent folder (install or save)", () => {
+    const external = path.join(root, "external");
+    write(path.join(external, "x.sh"), "external");
+    fs.mkdirSync(home("claude"), { recursive: true });
+    fs.symlinkSync(external, path.join(home("claude"), "hooks"));
+    profile("claude", "files/hooks/x.sh", "vault");
+    for (const replace of [false, true]) {
+      const plan = installAgent(paths("claude"), { replace });
+      expect(plan.links.find((l) => l.entry.rel === "hooks/x.sh")).toMatchObject({
+        action: "conflict",
+        reason: "hooks is a symlink",
+      });
+    }
+    expect(() => saveToProfile(paths("claude"), vaultDir, ["hooks/x.sh"], [])).toThrow(/symlink/);
+    expect(fs.readFileSync(path.join(external, "x.sh"), "utf8")).toBe("external");
+    expect(fs.lstatSync(path.join(external, "x.sh")).isSymbolicLink()).toBe(false);
+  });
+
+  it("keeps separate baselines for separate agent homes", () => {
+    fragment({ effortLevel: "high" });
+    installAgent(paths("claude")); // home A
+    const homeB = path.join(root, "claude-b");
+    write(path.join(homeB, "settings.json"), JSON.stringify({ effortLevel: "high" })); // set by hand
+    fragment({});
+    const b = paths("claude", { CLAUDE_CONFIG_DIR: homeB });
+    expect(b.stateFile).not.toBe(paths("claude").stateFile);
+    installAgent(b);
+    expect(readJson(path.join(homeB, "settings.json")).effortLevel).toBe("high");
+  });
+
+  it("ignores a baseline recorded for another vault", () => {
+    fragment({ effortLevel: "high" });
+    installAgent(paths("claude"));
+    const state = readJson(paths("claude").stateFile);
+    fs.writeFileSync(paths("claude").stateFile, JSON.stringify({ ...state, vault: "/elsewhere" }));
+    fragment({});
+    installAgent(paths("claude"));
+    expect(readJson(claudeSettings()).effortLevel).toBe("high");
+  });
+
+  it("de-duplicates save paths and refuses overlapping ones", () => {
+    write(path.join(home("claude"), "x.sh"), "mine");
+    const result = saveToProfile(paths("claude"), vaultDir, ["x.sh", "./x.sh", "x.sh"], []);
+    expect(result.saved).toHaveLength(1);
+    expect(fs.readFileSync(path.join(home("claude"), "x.sh"), "utf8")).toBe("mine");
+    write(path.join(home("claude"), "skills/s/SKILL.md"), "s");
+    expect(() =>
+      saveToProfile(paths("claude"), vaultDir, ["skills/s", "skills/s/SKILL.md"], []),
+    ).toThrow(/inside/);
+  });
+
+  it("reports a file where a folder should be instead of failing midway", () => {
+    write(path.join(home("claude"), "a.sh"), "local a");
+    write(path.join(home("claude"), "z"), "a file");
+    profile("claude", "files/a.sh", "vault a");
+    profile("claude", "files/z/x.sh", "vault x");
+    const report = installAgent(paths("claude"), { replace: true });
+    expect(report.links.find((l) => l.entry.rel === "z/x.sh")).toMatchObject({
+      action: "conflict",
+      reason: "z is a file, not a folder",
+    });
+    expect(fs.readFileSync(path.join(home("claude"), "z"), "utf8")).toBe("a file");
+    expect(readState(paths("claude")).links).toEqual(["a.sh"]);
+  });
+
+  it.skipIf(process.getuid?.() === 0)("rolls back everything when a step fails midway", () => {
+    write(path.join(home("claude"), "a.sh"), "local a");
+    fs.mkdirSync(path.join(home("claude"), "ro"), { recursive: true });
+    fs.chmodSync(path.join(home("claude"), "ro"), 0o500);
+    profile("claude", "files/a.sh", "vault a");
+    profile("claude", "files/ro/x.sh", "vault x");
+    try {
+      expect(() => installAgent(paths("claude"), { replace: true })).toThrow(/rolled back/);
+      const a = path.join(home("claude"), "a.sh");
+      expect(fs.lstatSync(a).isSymbolicLink()).toBe(false);
+      expect(fs.readFileSync(a, "utf8")).toBe("local a");
+      expect(fs.existsSync(paths("claude").stateFile)).toBe(false);
+    } finally {
+      fs.chmodSync(path.join(home("claude"), "ro"), 0o700);
+    }
+  });
+
+  it("does not silently re-add a setting or hook deleted on this machine", () => {
+    const hook = { type: "command", command: "$HOME/.claude/hooks/fresh.sh" };
+    fragment({ effortLevel: "high", hooks: { SessionStart: [{ hooks: [hook] }] } });
+    installAgent(paths("claude"));
+    write(claudeSettings(), JSON.stringify({ theme: "dark" })); // removed both by hand
+    const report = installAgent(paths("claude"));
+    expect(report.settings.map((s) => [s.action, s.deletedHere])).toEqual([
+      ["conflict", true],
+      ["conflict", true],
+    ]);
+    expect(readJson(claudeSettings())).toEqual({ theme: "dark" });
+    installAgent(paths("claude"), { replace: true });
+    expect(readJson(claudeSettings()).effortLevel).toBe("high");
+  });
+
+  it("forgets a key dropped everywhere, so a later local value is not removed", () => {
+    fragment({ effortLevel: "high" });
+    installAgent(paths("claude"));
+    fragment({});
+    write(claudeSettings(), "{}");
+    expect(installAgent(paths("claude")).settings.map((s) => s.action)).toEqual(["forget"]);
+    write(claudeSettings(), JSON.stringify({ effortLevel: "high" })); // the user sets it again
+    expect(installAgent(paths("claude")).settings).toEqual([]);
+    expect(readJson(claudeSettings()).effortLevel).toBe("high");
+  });
+
+  it("keeps the comments in a TOML fragment when saving a setting", () => {
+    profile("codex", "config.toml", "# my status line\n[tui]\nstatus_line_use_colors = true\n");
+    write(
+      path.join(home("codex"), "config.toml"),
+      '[tui]\nstatus_line = ["model"]\nstatus_line_use_colors = true\n',
+    );
+    saveToProfile(paths("codex"), vaultDir, [], ["tui.status_line"]);
+    const text = fs.readFileSync(path.join(vaultDir, "agents/codex/config.toml"), "utf8");
+    expect(text).toContain("# my status line");
+    expect(parseToml(text)).toEqual({
+      tui: { status_line: ["model"], status_line_use_colors: true },
+    });
   });
 });
