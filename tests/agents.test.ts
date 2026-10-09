@@ -726,3 +726,86 @@ describe("regressions found in the second review", () => {
     expect(readJson(claudeSettings())).toEqual({ theme: "dark" });
   });
 });
+
+describe("regressions found in the third review", () => {
+  const readJson = (file: string) => JSON.parse(fs.readFileSync(file, "utf8"));
+  const unix = process.getuid?.() !== 0;
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("never follows or empties a pre-existing folder at the old scratch names", () => {
+    const external = path.join(root, "external-scratch");
+    write(path.join(external, "new-0"), "external");
+    fs.mkdirSync(path.join(vaultDir, "agents/claude"), { recursive: true });
+    fs.symlinkSync(external, path.join(vaultDir, `agents/claude/.big-brain-tmp-${process.pid}`));
+    write(path.join(home("claude"), `.big-brain-staging-${process.pid}/keep.txt`), "mine");
+    write(path.join(home("claude"), "x.sh"), "local");
+
+    saveToProfile(paths("claude"), vaultDir, ["x.sh"], []);
+    installAgent(paths("claude"));
+    expect(fs.readFileSync(path.join(external, "new-0"), "utf8")).toBe("external");
+    expect(
+      fs.readFileSync(
+        path.join(home("claude"), `.big-brain-staging-${process.pid}/keep.txt`),
+        "utf8",
+      ),
+    ).toBe("mine");
+    expect(fs.readFileSync(path.join(vaultDir, "agents/claude/files/x.sh"), "utf8")).toBe("local");
+  });
+
+  it("refuses linked profile folders, also when the vault is opened through a link", () => {
+    const external = path.join(root, "external-files");
+    fs.mkdirSync(external);
+    fs.mkdirSync(path.join(vaultDir, "agents/claude"), { recursive: true });
+    fs.symlinkSync(external, path.join(vaultDir, "agents/claude/files"));
+    const alias = path.join(root, "vault-alias");
+    fs.symlinkSync(vaultDir, alias);
+    const viaAlias = agentPaths(alias, "agents", getAgent("claude"), {
+      userHome,
+      env: { XDG_STATE_HOME: path.join(root, "state") },
+    });
+    write(path.join(home("claude"), "x.sh"), "local");
+    expect(() => saveToProfile(viaAlias, alias, ["x.sh"], [])).toThrow(/symlink/);
+    expect(fs.readdirSync(external)).toEqual([]);
+    expect(() => installAgent(viaAlias)).toThrow(/Symlinks are not allowed/);
+  });
+
+  it.skipIf(!unix)("keeps the original vault copy when the save and its rollback both fail", () => {
+    profile("claude", "skills/mine/SKILL.md", "vault version");
+    write(path.join(home("claude"), "skills/mine/SKILL.md"), "local version");
+    installAgent(paths("claude")); // creates the state folder (the skill itself conflicts)
+    const stateDir = path.dirname(paths("claude").stateFile);
+    fs.chmodSync(stateDir, 0o500); // the final state write fails
+    const real = fs.renameSync;
+    vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
+      if (String(from).includes("old-0")) throw new Error("rename back failed");
+      return real(from, to);
+    });
+    try {
+      expect(() =>
+        saveToProfile(paths("claude"), vaultDir, ["skills/mine"], [], { force: true }),
+      ).toThrow(/could not be fully rolled back.*Nothing was deleted/);
+    } finally {
+      fs.chmodSync(stateDir, 0o700);
+    }
+    vi.restoreAllMocks();
+    const kept = fs
+      .readdirSync(path.join(vaultDir, "agents/claude"))
+      .filter((n) => n.startsWith(".big-brain-tmp-"));
+    expect(kept).toHaveLength(1);
+    const old = path.join(vaultDir, "agents/claude", kept[0] as string, "old-0/SKILL.md");
+    expect(fs.readFileSync(old, "utf8")).toBe("vault version");
+  });
+
+  it("saving a group over an empty value keeps the whole group", () => {
+    const statusLine = { type: "command", command: "mine.sh" };
+    profile("claude", "settings.json", JSON.stringify({ statusLine: null }));
+    write(path.join(home("claude"), "settings.json"), JSON.stringify({ statusLine }));
+    saveToProfile(paths("claude"), vaultDir, [], ["statusLine"]);
+    expect(readJson(path.join(vaultDir, "agents/claude/settings.json")).statusLine).toEqual(
+      statusLine,
+    );
+    installAgent(paths("claude"));
+    expect(readJson(path.join(home("claude"), "settings.json")).statusLine).toEqual(statusLine);
+  });
+});

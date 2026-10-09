@@ -257,6 +257,12 @@ function walkFiles(dir: string, base = dir): string[] {
  */
 export function collectEntries(p: AgentPaths): Entry[] {
   const entries: Entry[] = [];
+  for (const part of ["", INSTRUCTIONS, SKILLS, FILES]) {
+    const abs = path.join(p.profile, part);
+    if (fs.lstatSync(abs, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      throw new Error(`Symlinks are not allowed in an agent profile: ${part || p.profile}`);
+    }
+  }
   const instructions = path.join(p.profile, INSTRUCTIONS);
   if (fs.existsSync(instructions)) {
     entries.push({ rel: p.agent.instructionsFile, src: instructions, kind: "instructions" });
@@ -637,12 +643,21 @@ export function planSettings(
 /** Apply planned setting changes to a parsed settings object (returns a copy). */
 export function applySettingPlans(current: Record<string, Json>, plans: SettingPlan[]) {
   const next = clone(current);
-  for (const plan of plans) {
+  // Removals first: replacing a scalar with an object removes the old value
+  // before its new children are added, never after.
+  for (const plan of orderedPlans(plans)) {
     if (plan.action === "add" || plan.action === "update") {
       setAt(next, plan.leaf, clone(plan.wanted as Json));
     } else if (plan.action === "remove") deleteAt(next, plan.leaf);
   }
   return next;
+}
+
+function orderedPlans(plans: SettingPlan[]): SettingPlan[] {
+  return [
+    ...plans.filter((p) => p.action === "remove"),
+    ...plans.filter((p) => p.action !== "remove"),
+  ];
 }
 
 // --- TOML text editing ------------------------------------------------------
@@ -685,7 +700,7 @@ function findTableSpan(lines: string[], table: string[]): HeaderSpan | null {
 export function editToml(text: string, plans: SettingPlan[]): string {
   const before = parseToml(text) as Record<string, Json>;
   const lines = text === "" ? [] : text.replace(/\n$/, "").split("\n");
-  for (const plan of plans) {
+  for (const plan of orderedPlans(plans)) {
     if (plan.leaf.kind !== "key") continue;
     if (!["add", "update", "remove"].includes(plan.action)) continue;
     const table = plan.leaf.path.slice(0, -1);
@@ -864,7 +879,8 @@ class Backup {
     return to;
   }
   /** Put moved items back (after removing the link that replaced them). Best effort. */
-  restore(): void {
+  restore(): boolean {
+    let complete = true;
     for (const t of [...this.taken].reverse()) {
       if (t.mode !== "move") continue;
       const original = path.join(this.home, t.rel);
@@ -873,10 +889,12 @@ class Backup {
           fs.unlinkSync(original);
         }
         if (!fs.existsSync(original)) fs.renameSync(t.backup, original);
+        else complete = false;
       } catch {
-        // leave it in the backup; the manifest says where it belongs
+        complete = false; // left in the backup; the manifest says where it belongs
       }
     }
+    return complete;
   }
   private writeManifest(): void {
     const manifest = {
@@ -1009,7 +1027,9 @@ export function installAgent(p: AgentPaths, opts: InstallOptions = {}): InstallR
   // already done are undone in reverse so the machine is not left half-changed.
   const backup = new Backup(p.home, p.backupRoot);
   const undo: (() => void)[] = [];
-  const staging = path.join(p.home, `.big-brain-staging-${process.pid}`);
+  // Created on first use with a unique name; only this folder is ever cleaned up.
+  let staging: string | null = null;
+  let keep = false;
   try {
     for (const lp of plan.links) {
       const dst = path.join(p.home, lp.entry.rel);
@@ -1019,8 +1039,11 @@ export function installAgent(p: AgentPaths, opts: InstallOptions = {}): InstallR
       if (lp.entry.kind === "bundled-skill") {
         // Copy into a staging folder (not a skill root), then rename into
         // place: a failed copy never leaves a half-written skill behind.
+        if (!staging) {
+          fs.mkdirSync(p.home, { recursive: true });
+          staging = fs.mkdtempSync(path.join(p.home, ".big-brain-staging-"));
+        }
         const staged = path.join(staging, path.basename(dst));
-        fs.mkdirSync(staging, { recursive: true });
         fs.cpSync(lp.entry.src, staged, { recursive: true });
         fs.renameSync(staged, dst);
         undo.push(() => fs.rmSync(dst, { recursive: true, force: true }));
@@ -1077,17 +1100,25 @@ export function installAgent(p: AgentPaths, opts: InstallOptions = {}): InstallR
       settings: settingsState,
     });
   } catch (err) {
+    let complete = true;
     for (const step of undo.reverse()) {
       try {
         step();
       } catch {
-        // keep undoing the rest
+        complete = false; // keep undoing the rest
       }
     }
-    backup.restore();
+    if (!backup.restore()) complete = false;
+    if (!complete) {
+      keep = true;
+      const where = [staging, backup.used ? backup.dir : null].filter(Boolean).join(" and ");
+      throw new Error(
+        `Install failed and could not be fully rolled back: ${(err as Error).message}. Nothing was deleted; originals are in ${where}`,
+      );
+    }
     throw new Error(`Install failed and was rolled back: ${(err as Error).message}`);
   } finally {
-    removeTree(staging);
+    if (staging && !keep) removeTree(staging);
   }
   report.backupDir = backup.used ? backup.dir : null;
   return report;
@@ -1161,6 +1192,10 @@ function checkTree(p: AgentPaths, abs: string, rel: string): void {
 
 /** Every ancestor of target inside the vault must be a real directory (no symlink escapes). */
 function checkVaultParents(vaultDir: string, target: string): void {
+  const rel = path.relative(vaultDir, target);
+  if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) {
+    throw new Error(`${target} is outside the vault; refusing to write there`);
+  }
   let dir = path.dirname(target);
   while (dir.startsWith(vaultDir) && dir !== vaultDir) {
     if (fs.existsSync(dir) && fs.lstatSync(dir).isSymbolicLink()) {
@@ -1172,7 +1207,7 @@ function checkVaultParents(vaultDir: string, target: string): void {
 
 export function saveToProfile(
   p: AgentPaths,
-  vaultDir: string,
+  _vaultDir: string, // kept for callers; every check uses the canonical p.vault
   rels: string[],
   settingKeys: string[],
   opts: { force?: boolean } = {},
@@ -1207,10 +1242,10 @@ export function saveToProfile(
       throw new Error(`${rel} has no SKILL.md`);
     }
     const target = vaultTarget(p, rel, st.isDirectory());
-    checkVaultParents(vaultDir, target);
+    checkVaultParents(p.vault, target);
     if (fs.existsSync(target) && !opts.force) {
       throw new Error(
-        `${toRel(path.relative(vaultDir, target))} already exists in the vault (use --force to overwrite)`,
+        `${toRel(path.relative(p.vault, target))} already exists in the vault (use --force to overwrite)`,
       );
     }
     return { rel, abs, target };
@@ -1271,25 +1306,40 @@ export function saveToProfile(
         fragmentText = stringifyToml(applySettingPlans(fragment, plans) as never);
       }
     }
-    fragmentLeaves(parseSettings(fragmentText, p.agent.format, "new fragment"), p.agent);
+    const saved = parseSettings(fragmentText, p.agent.format, "new fragment");
+    fragmentLeaves(saved, p.agent);
+    for (const s of result.settings) {
+      const got = getAt(saved, { kind: "key", path: s.key.split(".").filter(Boolean) });
+      const emptied = isPlainObject(s.value) && Object.keys(s.value).length === 0;
+      if (!(deepEqual(got, s.value) || (emptied && (got === undefined || deepEqual(got, {}))))) {
+        throw new Error(
+          `Could not save ${s.key} exactly; edit ${p.agent.settingsFile} in the vault by hand`,
+        );
+      }
+    }
   }
 
   // Apply, undoing completed steps if one fails.
   const backup = new Backup(p.home, p.backupRoot);
   const undo: (() => void)[] = [];
   const state = readState(p);
-  const scratch = path.join(p.profile, `.big-brain-tmp-${process.pid}`);
+  // Created on first use with a unique name; only this folder is ever cleaned up.
+  let scratch: string | null = null;
+  let keep = false;
   try {
     for (const [n, job] of jobs.entries()) {
       if (!job) continue;
       // Stage the new copy and move any old one aside, both by rename inside
       // the profile's scratch folder (never scanned as skills or files): the
       // vault never holds a half-deleted or half-copied entry.
-      fs.mkdirSync(scratch, { recursive: true });
+      if (!scratch) {
+        fs.mkdirSync(p.profile, { recursive: true });
+        scratch = fs.mkdtempSync(path.join(p.profile, ".big-brain-tmp-"));
+      }
       const staged = path.join(scratch, `new-${n}`);
       fs.cpSync(job.abs, staged, { recursive: true, preserveTimestamps: true });
       if (fs.existsSync(job.target)) {
-        const aside = path.join(scratch, `old-${n}`);
+        const aside = path.join(scratch as string, `old-${n}`);
         fs.renameSync(job.target, aside);
         undo.push(() => {
           fs.rmSync(job.target, { recursive: true, force: true });
@@ -1303,34 +1353,42 @@ export function saveToProfile(
       fs.symlinkSync(job.target, job.abs);
       undo.push(() => fs.unlinkSync(job.abs));
       result.saved.push({ rel: job.rel, vaultPath: job.target });
-      result.touched.push(toRel(path.relative(vaultDir, job.target)));
+      result.touched.push(toRel(path.relative(p.vault, job.target)));
       if (!state.links.includes(job.rel)) state.links.push(job.rel);
     }
     if (fragmentText !== null) {
-      checkVaultParents(vaultDir, fragmentFile);
+      checkVaultParents(p.vault, fragmentFile);
       const oldFragment = readText(fragmentFile);
       atomicWrite(fragmentFile, fragmentText);
       undo.push(() =>
         oldFragment === null ? fs.unlinkSync(fragmentFile) : atomicWrite(fragmentFile, oldFragment),
       );
-      result.touched.push(toRel(path.relative(vaultDir, fragmentFile)));
+      result.touched.push(toRel(path.relative(p.vault, fragmentFile)));
       for (const id of retired) delete state.settings[id];
       for (const [id, value] of savedLeaves) state.settings[id] = clone(value);
     }
     state.links.sort();
     writeState(p, state);
   } catch (err) {
+    let complete = true;
     for (const step of undo.reverse()) {
       try {
         step();
       } catch {
-        // keep undoing the rest
+        complete = false; // keep undoing the rest
       }
     }
-    backup.restore();
+    if (!backup.restore()) complete = false;
+    if (!complete) {
+      keep = true;
+      const where = [scratch, backup.used ? backup.dir : null].filter(Boolean).join(" and ");
+      throw new Error(
+        `Save failed and could not be fully rolled back: ${(err as Error).message}. Nothing was deleted; originals are in ${where}`,
+      );
+    }
     throw new Error(`Save failed and was rolled back: ${(err as Error).message}`);
   } finally {
-    removeTree(scratch);
+    if (scratch && !keep) removeTree(scratch);
   }
   result.backupDir = backup.used ? backup.dir : null;
   return result;
