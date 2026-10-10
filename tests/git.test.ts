@@ -284,6 +284,21 @@ describe("background push", () => {
     expect(remote).toBe(git(["rev-parse", "HEAD"]).trim());
   });
 
+  it("keeps the process alive while waiting without a bound", async () => {
+    enableAutoCommit(true);
+    git(["remote", "add", "origin", remoteDir]);
+    git(["push", "-q", "-u", "origin", "main"]);
+    fs.writeFileSync(path.join(dir, ".git", "hooks", "pre-push"), "#!/bin/sh\nsleep 0.5\n", {
+      mode: 0o755,
+    });
+    new Vault(dir).createNote({ title: "Waited", body: "x" });
+    const timers = () => process.getActiveResourcesInfo().filter((r) => r === "Timeout").length;
+    const before = timers();
+    const waiting = settlePushes();
+    expect(timers()).toBe(before + 1);
+    expect(await waiting).toBe(true);
+  });
+
   it("gives up waiting at the bound", async () => {
     enableAutoCommit(true);
     git(["remote", "add", "origin", remoteDir]);

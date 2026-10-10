@@ -138,8 +138,11 @@ function pushInBackground(vaultDir: string): void {
  */
 export async function settlePushes(maxMs = Number.POSITIVE_INFINITY): Promise<boolean> {
   let timer: NodeJS.Timeout | undefined;
+  // Always a referenced timer (Node caps delays at 2^31-1 ms, ~24 days):
+  // the pushes themselves are unreferenced, so without it an idle process
+  // would exit mid-wait.
   const expired = new Promise<boolean>((resolve) => {
-    if (Number.isFinite(maxMs)) timer = setTimeout(() => resolve(false), maxMs);
+    timer = setTimeout(() => resolve(false), Math.min(maxMs, 2 ** 31 - 1));
   });
   const settled = (async () => {
     while (pushes.size > 0) await Promise.all([...pushes.values()].map((p) => p.done));

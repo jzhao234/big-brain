@@ -84,10 +84,12 @@ export function createProject(vault: Vault, input: CreateProjectInput): Note {
     : { frontmatter: {}, body: `## Goal\n\n${goal}\n\n## Tasks\n\n## Notes\n\n## Log\n` };
   // The project's own name and fields win over template defaults.
   const { tags: templateTags, title: _title, ...templateFields } = frontmatter;
+  // A blank `due:` in the template is a placeholder, not a date.
   const templateDue = templateFields.due;
   if (
     input.due === undefined &&
-    templateDue !== undefined &&
+    templateDue != null &&
+    templateDue !== "" &&
     (typeof templateDue !== "string" || !isCalendarDate(templateDue))
   ) {
     throw new Error(

@@ -107,6 +107,8 @@ describe("templates with their own frontmatter", () => {
     expect(createProject(vault, { title: "Own Due", due: "2026-03-01" }).frontmatter.due).toBe(
       "2026-03-01",
     );
+    fs.writeFileSync(path.join(dir, "templates", "project.md"), "---\ndue:\n---\n");
+    expect(createProject(vault, { title: "Undated" }).path).toBe("projects/Undated.md");
   });
 
   it("uses a template with unparseable frontmatter whole, as before", () => {
