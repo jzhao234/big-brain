@@ -224,23 +224,26 @@ export class Vault {
       const filename = n === 1 ? `${stem}.md` : `${stem} ${n}.md`;
       const rel = folder === "" ? filename : `${folder}/${filename}`;
       const abs = path.join(this.dir, rel);
-      this.assertInsideVault(abs);
+      this.assertVisible(rel);
       note = withNoteLock(this.dir, rel, () => {
-        const previous = fs.existsSync(abs) ? fs.readFileSync(abs, "utf8") : undefined;
-        if (previous !== undefined && !input.overwrite) {
+        this.assertInsideVault(abs);
+        const exists = fs.existsSync(abs);
+        if (exists && !input.overwrite) {
           if (unique) return undefined;
           throw new Error(`Note already exists: ${rel} (pass overwrite to replace it)`);
         }
+        const previous = exists ? fs.readFileSync(abs, "utf8") : undefined;
         atomicWriteFile(abs, content);
         const created = this.reloadPath(rel);
         if (!created) {
-          // A hidden name (".idea") or an ignored folder: the vault would never
-          // see the file, so undo the write rather than leave an invisible note.
-          if (previous === undefined) fs.rmSync(abs, { force: true });
-          else atomicWriteFile(abs, previous);
-          throw new Error(
-            `${rel} would be hidden from the vault (dot-file or ignored folder); choose another title or folder`,
-          );
+          // Hidden by a brain.config.json `ignore` glob: the vault would never
+          // see the file, so undo the write rather than leave an invisible
+          // note, unless something else has written there since.
+          if (fs.readFileSync(abs, "utf8") === content) {
+            if (previous === undefined) fs.rmSync(abs, { force: true });
+            else atomicWriteFile(abs, previous);
+          }
+          throw new Error(`${rel} is ignored by the vault; choose another title or folder`);
         }
         return created;
       });
@@ -258,7 +261,6 @@ export class Vault {
     const initial = this.get(ref);
     if (!initial) throw new Error(`Note not found: ${ref}`);
     const notePath = initial.path;
-    this.assertInsideVault(initial.absPath);
     const updated = withNoteLock(this.dir, notePath, () => {
       const note = this.reloadPath(notePath);
       if (!note) throw new Error(`Note changed or moved before it could be written: ${notePath}`);
@@ -268,6 +270,9 @@ export class Vault {
       // file mixing both is normalized to whichever it mostly uses.)
       const crlf = usesCRLF(note.raw);
       const next = toLF(mutate({ ...note, raw: toLF(note.raw) }));
+      // Checked under the lock, right before writing, so a folder swapped for
+      // a symlink while this waited can't redirect the write.
+      this.assertInsideVault(note.absPath);
       atomicWriteFile(note.absPath, crlf ? next.replace(/\n/g, "\r\n") : next);
       const reloaded = this.reloadPath(notePath);
       if (!reloaded) throw new Error(`Failed to read back updated note: ${notePath}`);
@@ -356,14 +361,15 @@ export class Vault {
     if (archiveFolder === "")
       throw new Error("folders.archive in brain.config.json must name a folder");
     const destRel = `${archiveFolder}/${sourcePath}`;
-    this.assertInsideVault(note.absPath);
-    this.assertInsideVault(path.join(this.dir, destRel));
+    this.assertVisible(destRel);
     const archived = withNoteLock(this.dir, sourcePath, () =>
       withNoteLock(this.dir, destRel, () => {
         const current = this.reloadPath(sourcePath);
         if (!current)
           throw new Error(`Note changed or moved before it could be archived: ${sourcePath}`);
         const destAbs = path.join(this.dir, destRel);
+        this.assertInsideVault(current.absPath);
+        this.assertInsideVault(destAbs);
         fs.mkdirSync(path.dirname(destAbs), { recursive: true });
         if (fs.existsSync(destAbs)) {
           throw new Error(`Archive destination already exists: ${destRel}`);
@@ -373,10 +379,17 @@ export class Vault {
         this.nameIndex = undefined;
         const result = this.reloadPath(toPosix(destRel));
         if (!result) {
+          // Hidden by an `ignore` glob: move it back, unless a note has
+          // reappeared at the source meanwhile (never overwrite it).
+          if (fs.existsSync(current.absPath)) {
+            throw new Error(
+              `Archive folder ${archiveFolder} is ignored by the vault; the note is at ${destRel}`,
+            );
+          }
           fs.renameSync(destAbs, current.absPath);
           this.reloadPath(sourcePath);
           throw new Error(
-            `Archive folder ${archiveFolder} is hidden from the vault (dot-folder or ignored); note left in place`,
+            `Archive folder ${archiveFolder} is ignored by the vault; note left in place`,
           );
         }
         return result;
@@ -415,6 +428,24 @@ export class Vault {
       throw new Error(`Folder must stay inside the vault: ${folder}`);
     }
     return segments.join("/");
+  }
+
+  /**
+   * Refuse a path the vault scan always skips (a dot-file or dot-folder, or a
+   * built-in ignored folder) before anything is written. Paths hidden only by
+   * brain.config.json `ignore` globs are caught after the write and undone.
+   */
+  private assertVisible(rel: string): void {
+    const segments = rel.split("/");
+    const skipped = ["node_modules", this.config.folders.templates, this.config.folders.agents];
+    if (
+      segments.some((s) => s.startsWith(".")) ||
+      skipped.some((folder) => rel.startsWith(`${folder}/`))
+    ) {
+      throw new Error(
+        `${rel} would be hidden from the vault (dot-file or ignored folder); choose another title or folder`,
+      );
+    }
   }
 
   /**
