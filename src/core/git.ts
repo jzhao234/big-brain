@@ -97,15 +97,21 @@ function pushInBackground(vaultDir: string): void {
         cwd: vaultDir,
         detached: true,
         stdio: "ignore",
-        timeout: PUSH_TIMEOUT_MS,
         env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
       });
       child.unref();
+      // Not spawn's `timeout` option: its timer is referenced and would keep a
+      // CLI process alive until the push ends. This one only applies while
+      // this process is still running anyway.
+      const deadline = setTimeout(() => child.kill(), PUSH_TIMEOUT_MS);
+      deadline.unref();
       child.on("error", (err) => {
+        clearTimeout(deadline);
         warn(`auto-push failed (commit kept locally): ${errText(err)}`);
         resolve();
       });
       child.on("exit", (code, signal) => {
+        clearTimeout(deadline);
         // Offline / no upstream / rejected: the commit is safe locally; sync later.
         if (code !== 0) {
           warn(`auto-push failed (commit kept locally): git push exited ${signal ?? code}`);
@@ -124,9 +130,26 @@ function pushInBackground(vaultDir: string): void {
   pushes.set(vaultDir, state);
 }
 
-/** Resolves once every background push started by this process has finished. */
-export async function settlePushes(): Promise<void> {
-  while (pushes.size > 0) await Promise.all([...pushes.values()].map((p) => p.done));
+/**
+ * Wait for this process's background pushes, including queued follow-ups,
+ * for at most `maxMs`. A follow-up push lives only in this process, so
+ * long-running servers call this on shutdown; the bound's timer keeps the
+ * process alive while it waits. Resolves true if everything finished.
+ */
+export async function settlePushes(maxMs = Number.POSITIVE_INFINITY): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const expired = new Promise<boolean>((resolve) => {
+    if (Number.isFinite(maxMs)) timer = setTimeout(() => resolve(false), maxMs);
+  });
+  const settled = (async () => {
+    while (pushes.size > 0) await Promise.all([...pushes.values()].map((p) => p.done));
+    return true;
+  })();
+  try {
+    return await Promise.race([settled, expired]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function errText(err: unknown): string {

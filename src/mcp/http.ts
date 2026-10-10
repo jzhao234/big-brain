@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { resolveVault } from "../core/config.js";
+import { settlePushes } from "../core/git.js";
 import { Vault } from "../core/vault.js";
 import { createRemoteMcpApp } from "./http-server.js";
 
@@ -60,7 +61,9 @@ try {
     console.error(`vault at ${dir} (${vault.notes().length} notes)`);
   });
 
-  const shutdown = () => listener.close(() => process.exit(0));
+  // Let a queued auto-push (which lives only in this process) finish, briefly.
+  const shutdown = () =>
+    listener.close(() => void settlePushes(10_000).finally(() => process.exit(0)));
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 } catch (error) {
