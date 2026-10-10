@@ -8,7 +8,7 @@ import { parseNote } from "./parse.js";
 import { SearchIndex } from "./search.js";
 import type { BrainConfig, Note, NoteLink, SearchOptions, SearchResult } from "./types.js";
 import { nameKey, safeFilename, toLF, toPosix, todayISO } from "./util.js";
-import { atomicWriteFile, withNoteLock } from "./write.js";
+import { atomicWriteFile, errorCode, withNoteLock } from "./write.js";
 
 export interface CreateNoteInput {
   title: string;
@@ -77,7 +77,16 @@ export class Vault {
       // sync clients); ctime can't be set from userland and size is free.
       const signature = `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}`;
       if (this.notesByPath.has(posix) && this.signatures.get(posix) === signature) continue;
-      const raw = fs.readFileSync(abs, "utf8");
+      let raw: string;
+      try {
+        raw = fs.readFileSync(abs, "utf8");
+      } catch (err) {
+        // Deleted or moved since the stat (another process archiving it), or
+        // unreadable: one file must not take every vault operation down.
+        if (errorCode(err) !== "ENOENT") warnOnce(`skipping unreadable note ${posix}: ${err}`);
+        seen.delete(posix);
+        continue;
+      }
       this.nameIndex = undefined;
       this.notesByPath.set(
         posix,
@@ -215,14 +224,24 @@ export class Vault {
       const filename = n === 1 ? `${stem}.md` : `${stem} ${n}.md`;
       const rel = folder === "" ? filename : `${folder}/${filename}`;
       const abs = path.join(this.dir, rel);
+      this.assertInsideVault(abs);
       note = withNoteLock(this.dir, rel, () => {
-        if (fs.existsSync(abs) && !input.overwrite) {
+        const previous = fs.existsSync(abs) ? fs.readFileSync(abs, "utf8") : undefined;
+        if (previous !== undefined && !input.overwrite) {
           if (unique) return undefined;
           throw new Error(`Note already exists: ${rel} (pass overwrite to replace it)`);
         }
         atomicWriteFile(abs, content);
         const created = this.reloadPath(rel);
-        if (!created) throw new Error(`Failed to read back created note: ${rel}`);
+        if (!created) {
+          // A hidden name (".idea") or an ignored folder: the vault would never
+          // see the file, so undo the write rather than leave an invisible note.
+          if (previous === undefined) fs.rmSync(abs, { force: true });
+          else atomicWriteFile(abs, previous);
+          throw new Error(
+            `${rel} would be hidden from the vault (dot-file or ignored folder); choose another title or folder`,
+          );
+        }
         return created;
       });
     }
@@ -239,6 +258,7 @@ export class Vault {
     const initial = this.get(ref);
     if (!initial) throw new Error(`Note not found: ${ref}`);
     const notePath = initial.path;
+    this.assertInsideVault(initial.absPath);
     const updated = withNoteLock(this.dir, notePath, () => {
       const note = this.reloadPath(notePath);
       if (!note) throw new Error(`Note changed or moved before it could be written: ${notePath}`);
@@ -332,7 +352,12 @@ export class Vault {
     if (!note) throw new Error(`Note not found: ${ref}`);
     if (note.archived) return note;
     const sourcePath = note.path;
-    const destRel = `${this.config.folders.archive}/${sourcePath}`;
+    const archiveFolder = this.vaultFolder(this.config.folders.archive);
+    if (archiveFolder === "")
+      throw new Error("folders.archive in brain.config.json must name a folder");
+    const destRel = `${archiveFolder}/${sourcePath}`;
+    this.assertInsideVault(note.absPath);
+    this.assertInsideVault(path.join(this.dir, destRel));
     const archived = withNoteLock(this.dir, sourcePath, () =>
       withNoteLock(this.dir, destRel, () => {
         const current = this.reloadPath(sourcePath);
@@ -347,7 +372,13 @@ export class Vault {
         this.notesByPath.delete(sourcePath);
         this.nameIndex = undefined;
         const result = this.reloadPath(toPosix(destRel));
-        if (!result) throw new Error(`Failed to read back archived note: ${destRel}`);
+        if (!result) {
+          fs.renameSync(destAbs, current.absPath);
+          this.reloadPath(sourcePath);
+          throw new Error(
+            `Archive folder ${archiveFolder} is hidden from the vault (dot-folder or ignored); note left in place`,
+          );
+        }
         return result;
       }),
     );
@@ -386,6 +417,24 @@ export class Vault {
     return segments.join("/");
   }
 
+  /**
+   * Refuse a write whose real location is outside the vault: a symlinked
+   * folder or note inside the vault would otherwise carry writes elsewhere.
+   * Reads still follow such links; only writes are confined.
+   */
+  private assertInsideVault(abs: string): void {
+    const root = fs.realpathSync(this.dir);
+    // The target may not exist yet: resolve its deepest existing ancestor.
+    let probe = abs;
+    while (!fs.existsSync(probe) && path.dirname(probe) !== probe) probe = path.dirname(probe);
+    const real = fs.realpathSync(probe);
+    if (real !== root && !real.startsWith(`${root}${path.sep}`)) {
+      throw new Error(
+        `Refusing to write ${toPosix(path.relative(this.dir, abs))}: it resolves outside the vault (${real})`,
+      );
+    }
+  }
+
   /** Force one path to be reparsed even on filesystems with coarse mtimes. */
   private reloadPath(rel: string): Note | undefined {
     const posix = toPosix(rel);
@@ -395,6 +444,15 @@ export class Vault {
     this.refresh();
     return this.notesByPath.get(posix);
   }
+}
+
+const warned = new Set<string>();
+
+/** stderr only (stdout is the MCP transport), and once per message per process. */
+function warnOnce(message: string): void {
+  if (warned.has(message)) return;
+  warned.add(message);
+  console.error(`big-brain: ${message}`);
 }
 
 /** True when most of the file's line breaks are CRLF. */
