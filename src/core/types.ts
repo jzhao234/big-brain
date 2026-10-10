@@ -77,6 +77,10 @@ export interface Note {
   headings: Heading[];
   /** Body without frontmatter. */
   body: string;
+  /** 0-based line of the file where `body` starts (heading lines are relative to it). */
+  bodyLine: number;
+  /** Set when the frontmatter block exists but isn't valid YAML; it is then left out of `body`. */
+  frontmatterError?: string;
   /** Full raw file content. */
   raw: string;
   mtimeMs: number;

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { stringifyNote } from "../src/core/frontmatter.js";
 import {
   extractHeadings,
   extractInlineTags,
@@ -169,5 +170,65 @@ describe("CRLF notes", () => {
     expect(note.tasks).toHaveLength(1);
     expect(note.tasks[0]).toMatchObject({ text: "write docs", due: "2026-01-05", line: 6 });
     expect(note.raw).toBe(raw); // on-disk bytes are kept for hashing
+  });
+});
+
+describe("fenced code beyond triple backticks", () => {
+  const body = [
+    "~~~md",
+    "## Not a heading [[Not A Link]] #nottag",
+    "~~~",
+    "````",
+    "```",
+    "## Still code",
+    "```",
+    "````",
+    "## Real [[Real Link]] #realtag",
+  ].join("\n");
+
+  it("keeps headings, links, and tags in ~~~ and longer fences out of the note", () => {
+    expect(extractHeadings(body)).toEqual([
+      { depth: 2, text: "Real [[Real Link]] #realtag", line: 8 },
+    ]);
+    expect(extractLinks(body).map((l) => l.target)).toEqual(["Real Link"]);
+    expect(extractInlineTags(body)).toEqual(["realtag"]);
+  });
+
+  it("treats an unclosed fence as code to the end, like the task parser", () => {
+    expect(extractHeadings("## A\n```\n## B")).toEqual([{ depth: 2, text: "A", line: 0 }]);
+  });
+});
+
+describe("frontmatter boundaries", () => {
+  it("reads a note that opens with an unclosed --- as all body", () => {
+    const note = parse("notes/Rule.md", "---\nafter a rule\n- [ ] task");
+    expect(note.frontmatter).toEqual({});
+    expect(note.body).toBe("---\nafter a rule\n- [ ] task");
+    expect(note.bodyLine).toBe(0);
+    expect(note.tasks.map((t) => t.line)).toEqual([2]);
+  });
+
+  it("flags non-mapping YAML and keeps the block out of the body", () => {
+    const note = parse("notes/Scalar.md", "---\njust words\n---\n## Body\n- [ ] t");
+    expect(note.frontmatterError).toMatch(/mapping/);
+    expect(note.body).toBe("## Body\n- [ ] t");
+    expect(note.bodyLine).toBe(3);
+    expect(note.headings).toEqual([{ depth: 2, text: "Body", line: 0 }]);
+    expect(note.tasks.map((t) => t.line)).toEqual([4]);
+  });
+
+  it("counts body lines from after a BOM-prefixed block", () => {
+    const note = parse("notes/Bom.md", "\uFEFF---\na: 1\n---\n# T");
+    expect(note.frontmatter).toEqual({ a: 1 });
+    expect(note.bodyLine).toBe(3);
+  });
+
+  it("serializes a body that itself opens with --- without eating it", () => {
+    const body = "---\nbetween rules\n---\nafter";
+    const withKeys = stringifyNote(body, { status: "active" });
+    expect(parse("notes/A.md", withKeys).body).toBe(`${body}\n`);
+    const noKeys = stringifyNote(body, {});
+    expect(parse("notes/A.md", noKeys).frontmatter).toEqual({});
+    expect(parse("notes/A.md", noKeys).body).toBe(`${body}\n`);
   });
 });

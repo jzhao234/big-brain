@@ -69,11 +69,37 @@ export function makeExcerpt(body: string, n = 200): string {
   return prose.length > n ? `${prose.slice(0, n - 1)}…` : prose;
 }
 
-/** Strip fenced code blocks and inline code so regexes don't match inside them. */
+// A backtick fence's info string may not contain backticks (CommonMark).
+const FENCE_OPEN_RE = /^\s{0,3}(`{3,}(?=[^`]*$)|~{3,})/;
+const FENCE_CLOSE_RE = /^\s{0,3}(`{3,}|~{3,})\s*$/;
+
+/**
+ * Which lines belong to a fenced code block, fence lines included. Per
+ * CommonMark, only a bare run of the same character, at least as long as the
+ * opener, closes a fence; an unclosed fence runs to the end of the text.
+ */
+export function fencedLines(lines: string[]): boolean[] {
+  let fence: string | undefined;
+  return lines.map((line) => {
+    if (fence === undefined) {
+      const open = FENCE_OPEN_RE.exec(line);
+      if (open) fence = open[1]!;
+      return open !== null;
+    }
+    const close = FENCE_CLOSE_RE.exec(line)?.[1];
+    if (close && close[0] === fence[0] && close.length >= fence.length) fence = undefined;
+    return true;
+  });
+}
+
+/**
+ * Blank out fenced code blocks and inline code so regexes don't match inside
+ * them. Line count is preserved, so line indices still match the input.
+ */
 export function stripCode(body: string): string {
-  return body
-    .replace(/```[\s\S]*?```/g, (m) => m.replace(/[^\n]/g, " "))
-    .replace(/`[^`\n]*`/g, " ");
+  const lines = body.split("\n");
+  const fenced = fencedLines(lines);
+  return lines.map((line, i) => (fenced[i] ? "" : line.replace(/`[^`\n]*`/g, " "))).join("\n");
 }
 
 export function uniq<T>(arr: T[]): T[] {

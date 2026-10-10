@@ -87,8 +87,9 @@ export function addTask(vault: Vault, input: AddTaskInput): TaskItem {
     targetRef = getDailyNote(vault).path;
     heading = input.heading ?? "Tasks";
   }
-  const updated = vault.appendToNote(targetRef, line, heading);
-  const added = updated.tasks.find((t) => t.raw.trim() === line.trim() && !t.done);
+  const { note: updated, line: lineIndex } = vault.appendBlock(targetRef, line, heading);
+  // Read back by position: a task with the same text may already exist in the note.
+  const added = updated.tasks.find((t) => t.line === lineIndex);
   if (!added) throw new Error("Task was written but could not be read back");
   return added;
 }
@@ -118,8 +119,11 @@ function resolveTask(candidates: TaskItem[], idOrText: string, kind: string): Ta
 
 /**
  * Rewrite one task line under the note lock. The task is re-found by id in the
- * latest file contents (and must still satisfy `stillApplies`), so a concurrent
- * edit fails loudly instead of touching the wrong line or undoing a change. Returns the task as re-parsed from its (unchanged) line index.
+ * latest file contents, its line must still read exactly as when it was listed,
+ * and it must still satisfy `stillApplies`, so a concurrent edit fails loudly
+ * instead of touching the wrong line or undoing a change. (Duplicate task texts
+ * are numbered by position, so after one is deleted its id names the other.)
+ * Returns the task as re-parsed from its (unchanged) line index.
  */
 function rewriteTask(
   vault: Vault,
@@ -135,7 +139,9 @@ function rewriteTask(
     const current = note.tasks.find((candidate) => candidate.id === task.id);
     const lines = note.raw.split("\n");
     const line = current ? lines[current.line] : undefined;
-    if (!current || line === undefined || !stillApplies(current)) throw stale();
+    if (!current || line === undefined || current.raw !== task.raw || !stillApplies(current)) {
+      throw stale();
+    }
     lineIndex = current.line;
     lines[lineIndex] = edit(line);
     return lines.join("\n");
