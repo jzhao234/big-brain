@@ -163,12 +163,23 @@ program
   .option("--status", "show index status only")
   .action(async (opts: { rebuild?: boolean; status?: boolean }) => {
     try {
+      if (opts.status && opts.rebuild) {
+        throw new Error("Cannot combine --status with --rebuild");
+      }
       const vault = openVault();
       if (!vault.config.embeddings.enabled) {
         return console.log(
           pc.yellow(
             'Embeddings are off. Enable with "embeddings": { "enabled": true } in brain.config.json.',
           ),
+        );
+      }
+      if (opts.status) {
+        const index = new SemanticIndex(vault.dir, vault.config.embeddings.model);
+        const s = index.status();
+        const stale = index.stale(vault.notes(true)).length;
+        return console.log(
+          `model ${s.model} · ${s.notes} notes · ${s.chunks} chunks · ${(s.sizeBytes / 1024).toFixed(0)}KB · ${stale} stale`,
         );
       }
       const provider = await createEmbeddingProvider(vault.config.embeddings);
@@ -178,13 +189,6 @@ program
         rmSync(path.join(vault.dir, INDEX_DIR, INDEX_FILE), { force: true });
       }
       const index = new SemanticIndex(vault.dir, provider.id);
-      if (opts.status) {
-        const s = index.status();
-        const stale = index.stale(vault.notes(true)).length;
-        return console.log(
-          `model ${s.model} · ${s.notes} notes · ${s.chunks} chunks · ${(s.sizeBytes / 1024).toFixed(0)}KB · ${stale} stale`,
-        );
-      }
       const embedded = await index.ensure(vault.notes(true), provider);
       const s = index.status();
       console.log(

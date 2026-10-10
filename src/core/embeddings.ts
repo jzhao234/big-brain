@@ -100,6 +100,22 @@ export async function createEmbeddingProvider(
 // Chunking
 // ---------------------------------------------------------------------------
 
+/** Prefer word boundaries, but split oversized tokens without breaking a code point. */
+function splitChunk(text: string, limit: number): string[] {
+  const chunks: string[] = [];
+  let rest = text;
+  while (rest.length > limit) {
+    const space = rest.slice(0, limit + 1).search(/\s+\S*$/);
+    let end = space > 0 ? space : limit;
+    const last = rest.charCodeAt(end - 1);
+    if (last >= 0xd800 && last <= 0xdbff) end--;
+    chunks.push(rest.slice(0, end).trim());
+    rest = rest.slice(end).trimStart();
+  }
+  if (rest !== "") chunks.push(rest);
+  return chunks;
+}
+
 /** Split a note into embedding chunks along markdown section boundaries. */
 export function chunkNote(note: Note): string[] {
   const head = [note.title, note.tags.length > 0 ? `tags: ${note.tags.join(", ")}` : ""]
@@ -116,7 +132,7 @@ export function chunkNote(note: Note): string[] {
     }
     // Long section: split on paragraph boundaries into ~CHUNK_TARGET pieces.
     let buf = "";
-    for (const para of text.split(/\n{2,}/)) {
+    for (const para of text.split(/\n{2,}/).flatMap((p) => splitChunk(p, CHUNK_TARGET))) {
       if (buf.length + para.length > CHUNK_TARGET && buf !== "") {
         chunks.push(`${note.title}\n${buf.trim()}`);
         buf = "";
@@ -126,7 +142,7 @@ export function chunkNote(note: Note): string[] {
     if (buf.trim() !== "") chunks.push(`${note.title}\n${buf.trim()}`);
   }
   if (chunks.length === 0) chunks.push(head);
-  return chunks.map((c) => c.slice(0, CHUNK_TARGET * 2));
+  return chunks.flatMap((c) => splitChunk(c, CHUNK_TARGET * 2));
 }
 
 // ---------------------------------------------------------------------------
@@ -134,7 +150,7 @@ export function chunkNote(note: Note): string[] {
 // ---------------------------------------------------------------------------
 
 interface NoteVectors {
-  /** sha1 of the note's raw content; mismatch → re-embed. */
+  /** Versioned hash of the note's raw content; mismatch → re-embed. */
   hash: string;
   chunks: number[][];
   /** Unit-normalized mean of chunk vectors, for note↔note similarity. */
@@ -147,8 +163,39 @@ interface IndexFileShape {
   notes: Record<string, NoteVectors>;
 }
 
-function sha1(s: string): string {
-  return createHash("sha1").update(s).digest("hex");
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isIndexFile(value: unknown): value is IndexFileShape {
+  if (!isRecord(value) || value.version !== 1 || typeof value.model !== "string") return false;
+  if (!isRecord(value.notes)) return false;
+  let dimension: number | undefined;
+  const vector = (v: unknown): boolean => {
+    if (
+      !Array.isArray(v) ||
+      v.length === 0 ||
+      !v.every((n) => typeof n === "number" && Number.isFinite(n))
+    ) {
+      return false;
+    }
+    dimension ??= v.length;
+    return v.length === dimension;
+  };
+  return Object.values(value.notes).every(
+    (note) =>
+      isRecord(note) &&
+      typeof note.hash === "string" &&
+      Array.isArray(note.chunks) &&
+      note.chunks.length > 0 &&
+      note.chunks.every(vector) &&
+      vector(note.centroid),
+  );
+}
+
+function noteHash(s: string): string {
+  // Rebuild legacy vectors that omitted the tails of oversized paragraphs.
+  return createHash("sha1").update(`chunks-v2\0${s}`).digest("hex");
 }
 
 function dot(a: number[], b: number[]): number {
@@ -211,9 +258,9 @@ export class SemanticIndex {
     const empty: IndexFileShape = { version: 1, model: this.model, notes: {} };
     if (!fs.existsSync(this.file)) return empty;
     try {
-      const loaded = JSON.parse(fs.readFileSync(this.file, "utf8")) as IndexFileShape;
+      const loaded: unknown = JSON.parse(fs.readFileSync(this.file, "utf8"));
       // A different model invalidates the whole index.
-      return loaded.version === 1 && loaded.model === this.model ? loaded : empty;
+      return isIndexFile(loaded) && loaded.model === this.model ? loaded : empty;
     } catch {
       // Corrupt index: rebuild from scratch. It's derived data.
       return empty;
@@ -222,7 +269,7 @@ export class SemanticIndex {
 
   /** Notes whose content changed (or are new) since last indexing. */
   stale(notes: Note[]): Note[] {
-    return notes.filter((n) => this.data.notes[n.path]?.hash !== sha1(n.raw));
+    return notes.filter((n) => this.data.notes[n.path]?.hash !== noteHash(n.raw));
   }
 
   /**
@@ -242,7 +289,7 @@ export class SemanticIndex {
         const chunks = chunkNote(note);
         const vectors = (await provider.embed(chunks)).map((v) => v.map(round));
         embedded[note.path] = {
-          hash: sha1(note.raw),
+          hash: noteHash(note.raw),
           chunks: vectors,
           centroid: meanVector(vectors).map(round),
         };
@@ -264,7 +311,7 @@ export class SemanticIndex {
   /** Hash of a note file's current contents, or undefined if it's gone. */
   private currentHash(notePath: string): string | undefined {
     try {
-      return sha1(fs.readFileSync(path.join(this.vaultDir, notePath), "utf8"));
+      return noteHash(fs.readFileSync(path.join(this.vaultDir, notePath), "utf8"));
     } catch {
       return undefined;
     }
@@ -291,9 +338,14 @@ export class SemanticIndex {
   }
 
   /** Rank note paths by max-chunk cosine similarity to a query vector. */
-  query(queryVector: number[], limit = 50): Array<{ path: string; score: number }> {
+  query(
+    queryVector: number[],
+    limit = 50,
+    eligible: (notePath: string) => boolean = () => true,
+  ): Array<{ path: string; score: number }> {
     const scored: Array<{ path: string; score: number }> = [];
     for (const [p, nv] of Object.entries(this.data.notes)) {
+      if (!eligible(p)) continue;
       let best = -1;
       for (const chunk of nv.chunks) best = Math.max(best, dot(queryVector, chunk));
       scored.push({ path: p, score: best });
@@ -371,13 +423,10 @@ export async function hybridSearch(
 
   const [queryVector] = await provider.embed([query]);
   const byPath = new Map(notes.map((n) => [n.path, n]));
-  const semantic = index
-    .query(queryVector!, pool * 2)
-    .filter(({ path: p }) => {
-      const note = byPath.get(p);
-      return note !== undefined && noteMatchesFilters(note, opts);
-    })
-    .slice(0, pool);
+  const semantic = index.query(queryVector!, pool, (p) => {
+    const note = byPath.get(p);
+    return note !== undefined && noteMatchesFilters(note, opts);
+  });
 
   const fused = rrfFuse([lexical.map((r) => r.path), semantic.map((s) => s.path)]);
   const lexicalByPath = new Map(lexical.map((r) => [r.path, r]));
