@@ -36,34 +36,55 @@ export interface ParsedFrontmatter {
   content: string;
 }
 
+const DELIMITER_RE = /^---[ \t]*\r?$/;
+
 /**
- * Offset in `raw` where the body starts after a frontmatter block, or
- * undefined when the file has none. Same delimiter rules as gray-matter
- * (leading BOM skipped, `----` is not an opener, the block ends at the first
- * line starting with `---`), except that an opener with no closing delimiter
- * is not frontmatter: a note that merely begins with a `---` rule keeps its
- * text as body instead of having all of it read as YAML.
+ * Locate a frontmatter block: the YAML between a first line of `---` (after
+ * an optional BOM) and the next line that is exactly `---`, and the offset
+ * where the body starts. Undefined when the file has none. Unlike
+ * gray-matter, which this replaces for parsing, a delimiter must be a whole
+ * line (`----`, `---yaml`, and `--- text` are not delimiters, so a closing
+ * line with text after it can't start the body mid-line), and an opener with
+ * no closing line is not frontmatter: a note that merely begins with a `---`
+ * rule keeps its text as body instead of having all of it read as YAML.
  */
-export function frontmatterEnd(raw: string): number | undefined {
+function frontmatterBlock(raw: string): { yaml: string; end: number } | undefined {
   const start = raw.charCodeAt(0) === 0xfeff ? 1 : 0;
-  if (!raw.startsWith("---", start) || raw.charAt(start + 3) === "-") return undefined;
-  const close = raw.indexOf("\n---", start + 3);
-  if (close === -1) return undefined;
-  let end = close + 4;
-  if (raw[end] === "\r") end++;
-  if (raw[end] === "\n") end++;
-  return end;
+  let lineStart = start;
+  let yamlStart: number | undefined;
+  for (;;) {
+    const newline = raw.indexOf("\n", lineStart);
+    const lineEnd = newline === -1 ? raw.length : newline;
+    const isDelimiter = DELIMITER_RE.test(raw.slice(lineStart, lineEnd));
+    if (yamlStart === undefined) {
+      if (!isDelimiter || newline === -1) return undefined;
+      yamlStart = newline + 1;
+    } else if (isDelimiter) {
+      // A closing line at the very end of the file has no newline to skip.
+      return {
+        yaml: raw.slice(yamlStart, lineStart),
+        end: newline === -1 ? raw.length : newline + 1,
+      };
+    } else if (newline === -1) {
+      return undefined;
+    }
+    lineStart = newline + 1;
+  }
+}
+
+/** Offset in `raw` where the body starts after a frontmatter block, or undefined when it has none. */
+export function frontmatterEnd(raw: string): number | undefined {
+  return frontmatterBlock(raw)?.end;
 }
 
 /** Split a markdown file into frontmatter data and body. Throws on malformed YAML. */
 export function parseFrontmatter(raw: string): ParsedFrontmatter {
-  if (frontmatterEnd(raw) === undefined) {
+  const block = frontmatterBlock(raw);
+  if (block === undefined) {
     return { data: {}, content: raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw };
   }
-  // Passing options also bypasses gray-matter's shared parse cache, whose
-  // cached `data` objects would otherwise be aliased across callers.
-  const parsed = matter(raw, OPTIONS);
-  return { data: (parsed.data ?? {}) as Record<string, unknown>, content: parsed.content };
+  const data = yamlEngine.parse(block.yaml) as Record<string, unknown>;
+  return { data, content: raw.slice(block.end) };
 }
 
 /** Serialize a body and frontmatter data back into a markdown file. */
