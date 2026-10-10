@@ -5,10 +5,12 @@ import path from "node:path";
 const LOCK_DIR = path.join(".bigbrain", "locks");
 const LOCK_TIMEOUT_MS = 5_000;
 const STALE_LOCK_MS = 30_000;
+/** A lock this old is reclaimed even if its owner pid is alive (hung, or a reused pid). */
+const ABANDONED_LOCK_MS = 10 * 60_000;
 const RETRY_MS = 10;
 const sleeper = new Int32Array(new SharedArrayBuffer(4));
 
-function errorCode(err: unknown): string | undefined {
+export function errorCode(err: unknown): string | undefined {
   return err && typeof err === "object" && "code" in err
     ? String((err as { code?: unknown }).code)
     : undefined;
@@ -19,9 +21,25 @@ function lockPath(vaultDir: string, notePath: string): string {
   return path.join(vaultDir, LOCK_DIR, `${key}.lock`);
 }
 
+/** Whether the process that wrote a lock token (`pid:uuid`) still exists on this machine. */
+function ownerAlive(token: string): boolean {
+  const pid = Number(token.split(":")[0]);
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return errorCode(err) === "EPERM"; // exists, owned by another user
+  }
+}
+
 function removeStaleLock(file: string): boolean {
   try {
-    if (Date.now() - fs.statSync(file).mtimeMs <= STALE_LOCK_MS) return false;
+    const age = Date.now() - fs.statSync(file).mtimeMs;
+    if (age <= STALE_LOCK_MS) return false;
+    // Age alone doesn't prove the owner stopped writing (a long refresh, a
+    // suspended process): reclaiming its lock would let two writers interleave.
+    if (age <= ABANDONED_LOCK_MS && ownerAlive(fs.readFileSync(file, "utf8"))) return false;
     fs.unlinkSync(file);
     return true;
   } catch (err) {
@@ -44,7 +62,7 @@ export function withNoteLock<T>(vaultDir: string, notePath: string, fn: () => T)
       if (errorCode(err) !== "EEXIST") throw err;
       if (removeStaleLock(file)) continue;
       if (Date.now() >= deadline) {
-        throw new Error(`Timed out waiting to write note: ${notePath}`);
+        throw new Error(`Timed out waiting to write note: ${notePath} (lock file ${file})`);
       }
       Atomics.wait(sleeper, 0, 0, RETRY_MS);
     }
@@ -67,7 +85,9 @@ export function withNoteLock<T>(vaultDir: string, notePath: string, fn: () => T)
 /** Replace a file atomically using a same-directory temporary file. */
 export function atomicWriteFile(file: string, content: string): void {
   const dir = path.dirname(file);
-  const temp = path.join(dir, `.${path.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
+  // Short, fixed-length name: a long target filename plus a suffix could pass
+  // the filesystem's 255-byte name limit.
+  const temp = path.join(dir, `.${randomUUID()}.tmp`);
   const mode = fs.existsSync(file) ? fs.statSync(file).mode & 0o777 : 0o666;
   let fd: number | undefined;
   fs.mkdirSync(dir, { recursive: true });

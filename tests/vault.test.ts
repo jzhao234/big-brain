@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,6 +13,7 @@ import { SearchIndex } from "../src/core/search.js";
 import { addTask, completeTask, listTasks, updateTask } from "../src/core/tasks.js";
 import { todayISO } from "../src/core/util.js";
 import { Vault } from "../src/core/vault.js";
+import { withNoteLock } from "../src/core/write.js";
 
 let dir: string;
 let vault: Vault;
@@ -533,5 +535,116 @@ describe("duplicate task texts", () => {
     });
     expect(() => completeTask(vault, first.id)).toThrow(/changed before it could be updated/);
     expect(fs.readFileSync(abs, "utf8")).toBe("- [ ] same 📅 2026-10-12\n");
+  });
+});
+
+describe("write paths stay inside a visible vault", () => {
+  it("refuses a hidden title or ignored folder without leaving a file behind", () => {
+    expect(() => vault.createNote({ title: ".idea", body: "thought" })).toThrow(/hidden/);
+    expect(fs.existsSync(path.join(dir, "notes", ".idea.md"))).toBe(false);
+    expect(() => vault.createNote({ title: "Sneaky", folder: "templates" })).toThrow(/hidden/);
+    expect(fs.existsSync(path.join(dir, "templates", "Sneaky.md"))).toBe(false);
+  });
+
+  it("restores an ignored file that an overwrite would have replaced", () => {
+    const tpl = path.join(dir, "templates", "daily.md");
+    const before = fs.readFileSync(tpl, "utf8");
+    expect(() =>
+      vault.createNote({ title: "daily", folder: "templates", overwrite: true }),
+    ).toThrow(/hidden/);
+    expect(fs.readFileSync(tpl, "utf8")).toBe(before);
+  });
+
+  it("creates a long CJK title within the filesystem's byte limit", () => {
+    const note = vault.createNote({ title: "漢".repeat(100), body: "x" });
+    expect(Buffer.byteLength(path.basename(note.path))).toBeLessThanOrEqual(255);
+    expect(vault.get(note.path)?.body).toContain("x");
+  });
+
+  it("edits a note whose filename is near the 255-byte limit", () => {
+    const name = `${"a".repeat(240)}.md`;
+    fs.writeFileSync(path.join(dir, "notes", name), "# Long\n");
+    vault.refresh();
+    vault.appendToNote(`notes/${name}`, "more");
+    expect(fs.readFileSync(path.join(dir, "notes", name), "utf8")).toBe("# Long\n\nmore\n");
+  });
+
+  it("skips a note deleted between the scan and the read", () => {
+    vault.createNote({ title: "Keeper" });
+    fs.writeFileSync(path.join(dir, "notes", "Gone.md"), "# Gone\n");
+    const real = fs.readFileSync;
+    vi.spyOn(fs, "readFileSync").mockImplementation(((file: fs.PathOrFileDescriptor, ...rest) => {
+      if (String(file).endsWith("Gone.md")) {
+        throw Object.assign(new Error("ENOENT: gone"), { code: "ENOENT" });
+      }
+      return real(file, ...(rest as [BufferEncoding]));
+    }) as typeof fs.readFileSync);
+    expect(() => vault.refresh()).not.toThrow();
+    expect(vault.get("Gone")).toBeUndefined();
+    expect(vault.get("Keeper")).toBeDefined();
+  });
+
+  it("refuses writes through a symlink that leaves the vault", () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "bb-outside-"));
+    try {
+      fs.writeFileSync(path.join(outside, "Secret.md"), "private\n");
+      fs.symlinkSync(outside, path.join(dir, "notes", "ext"));
+      vault.refresh();
+      expect(() => vault.createNote({ title: "Leak", folder: "notes/ext" })).toThrow(
+        /outside the vault/,
+      );
+      expect(() => vault.appendToNote("notes/ext/Secret.md", "changed")).toThrow(
+        /outside the vault/,
+      );
+      expect(fs.readdirSync(outside)).toEqual(["Secret.md"]);
+      expect(fs.readFileSync(path.join(outside, "Secret.md"), "utf8")).toBe("private\n");
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses an archive folder outside the vault and leaves the note in place", () => {
+    vault.createNote({ title: "Stay" });
+    vault.config.folders.archive = "../escaped";
+    expect(() => vault.archiveNote("Stay")).toThrow(/inside the vault/);
+    expect(fs.existsSync(path.join(dir, "notes", "Stay.md"))).toBe(true);
+    expect(fs.existsSync(path.join(dir, "..", "escaped"))).toBe(false);
+  });
+
+  it("puts the note back when the archive folder is hidden from the vault", () => {
+    vault.createNote({ title: "Back" });
+    vault.config.folders.archive = ".archive";
+    expect(() => vault.archiveNote("Back")).toThrow(/note left in place/);
+    expect(fs.existsSync(path.join(dir, "notes", "Back.md"))).toBe(true);
+    expect(vault.get("Back")?.path).toBe("notes/Back.md");
+  });
+});
+
+describe("note locks", () => {
+  const lockFor = (rel: string) =>
+    path.join(dir, ".bigbrain", "locks", `${createHash("sha256").update(rel).digest("hex")}.lock`);
+  const plantLock = (rel: string, token: string) => {
+    const file = lockFor(rel);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, token);
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(file, old, old);
+  };
+
+  it("reclaims an old lock whose owner process is gone", () => {
+    plantLock("notes/A.md", "999999999:dead");
+    expect(withNoteLock(dir, "notes/A.md", () => "ran")).toBe("ran");
+  });
+
+  it("waits out an old lock whose owner is still running", () => {
+    plantLock("notes/B.md", `${process.pid}:alive`);
+    // Advance the clock a second per call so the 5s wait ends quickly.
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => {
+      now += 1000;
+      return now;
+    });
+    expect(() => withNoteLock(dir, "notes/B.md", () => "ran")).toThrow(/Timed out/);
+    expect(fs.existsSync(lockFor("notes/B.md"))).toBe(true);
   });
 });

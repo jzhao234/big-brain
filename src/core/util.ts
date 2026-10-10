@@ -1,14 +1,25 @@
 import { createHash } from "node:crypto";
 
+const MAX_FILENAME_CHARS = 120;
+// Filesystems cap a name at 255 bytes, not characters (120 CJK characters are
+// 360 bytes); this leaves room for a " 12" collision suffix and ".md".
+const MAX_FILENAME_BYTES = 200;
+
 /** Sanitize a title into a safe filename, Obsidian-style (keeps spaces and case). */
 export function safeFilename(title: string): string {
-  const filename = title
+  const cleaned = title
     .replace(/[\\/:*?"<>|#^[\]]/g, "")
     .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 120);
-  const last = filename.charCodeAt(filename.length - 1);
-  return last >= 0xd800 && last <= 0xdbff ? filename.slice(0, -1) : filename;
+    .trim();
+  // Cut on whole code points, within both limits.
+  let filename = "";
+  let bytes = 0;
+  for (const ch of cleaned) {
+    bytes += Buffer.byteLength(ch, "utf8");
+    if (filename.length + ch.length > MAX_FILENAME_CHARS || bytes > MAX_FILENAME_BYTES) break;
+    filename += ch;
+  }
+  return filename;
 }
 
 /** Local date as YYYY-MM-DD. */
