@@ -1,8 +1,8 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import type { GitConfig } from "./types.js";
 
 const LOCAL_GIT_TIMEOUT_MS = 10_000;
-const PUSH_TIMEOUT_MS = 30_000;
+const PUSH_TIMEOUT_MS = 120_000;
 
 function git(vaultDir: string, args: string[], timeout = LOCAL_GIT_TIMEOUT_MS): string {
   return execFileSync("git", args, {
@@ -68,17 +68,65 @@ export function autoCommit(
     git(vaultDir, ["add", "-A", "--", ...pathspecs]);
     git(vaultDir, [...identity, "commit", "-q", "-m", message, "--only", "--", ...pathspecs]);
 
-    if (cfg.autoPush) {
-      try {
-        git(vaultDir, ["push", "-q"], PUSH_TIMEOUT_MS);
-      } catch (err) {
-        // Offline / no upstream / rejected: the commit is safe locally; sync later.
-        warn(`auto-push failed (commit kept locally): ${errText(err)}`);
-      }
-    }
+    if (cfg.autoPush) pushInBackground(vaultDir);
   } catch (err) {
     warn(`auto-commit skipped: ${errText(err)}`);
   }
+}
+
+/** Per vault: the push in flight, and whether another commit landed meanwhile. */
+const pushes = new Map<string, { done: Promise<void>; again: boolean }>();
+
+/**
+ * Push without blocking the caller. A synchronous push held the event loop
+ * for up to its timeout, which on the MCP servers stalled every other request
+ * behind one slow or offline network. Pushes are coalesced per vault: while
+ * one runs, later commits just mark that one more push is needed. The child
+ * is detached, so a CLI process can exit and the push still completes.
+ */
+function pushInBackground(vaultDir: string): void {
+  const running = pushes.get(vaultDir);
+  if (running) {
+    running.again = true;
+    return;
+  }
+  const state = { done: Promise.resolve(), again: false };
+  const once = (): Promise<void> =>
+    new Promise((resolve) => {
+      const child = spawn("git", ["push", "-q"], {
+        cwd: vaultDir,
+        detached: true,
+        stdio: "ignore",
+        timeout: PUSH_TIMEOUT_MS,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      });
+      child.unref();
+      child.on("error", (err) => {
+        warn(`auto-push failed (commit kept locally): ${errText(err)}`);
+        resolve();
+      });
+      child.on("exit", (code, signal) => {
+        // Offline / no upstream / rejected: the commit is safe locally; sync later.
+        if (code !== 0) {
+          warn(`auto-push failed (commit kept locally): git push exited ${signal ?? code}`);
+        }
+        resolve();
+      });
+    });
+  const loop = async () => {
+    do {
+      state.again = false;
+      await once();
+    } while (state.again);
+    pushes.delete(vaultDir);
+  };
+  state.done = loop();
+  pushes.set(vaultDir, state);
+}
+
+/** Resolves once every background push started by this process has finished. */
+export async function settlePushes(): Promise<void> {
+  while (pushes.size > 0) await Promise.all([...pushes.values()].map((p) => p.done));
 }
 
 function errText(err: unknown): string {

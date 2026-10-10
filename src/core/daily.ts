@@ -1,3 +1,4 @@
+import { parseFrontmatter } from "./frontmatter.js";
 import type { Note } from "./types.js";
 import { isCalendarDate, nowStamp, todayISO } from "./util.js";
 import type { Vault } from "./vault.js";
@@ -16,6 +17,26 @@ export function renderTemplate(tpl: string, vars: Record<string, string>): strin
   return tpl.replace(/\{\{\s*(\w+)\s*\}\}/g, (m, key: string) => vars[key] ?? m);
 }
 
+/**
+ * Split a rendered template into its own frontmatter and body, so an
+ * Obsidian-style template's `---` block becomes note metadata instead of a
+ * second YAML block in the body. The note's own fields (type, created) win;
+ * template tags are merged with the note's. A template whose frontmatter
+ * doesn't parse is used whole as the body, as before.
+ */
+export function templateParts(rendered: string): {
+  frontmatter: Record<string, unknown>;
+  body: string;
+} {
+  try {
+    const { data, content } = parseFrontmatter(rendered);
+    const { type: _type, created: _created, ...frontmatter } = data;
+    return { frontmatter, body: content };
+  } catch {
+    return { frontmatter: {}, body: rendered };
+  }
+}
+
 /** Get (or create) the daily note for a date (default today). */
 export function getDailyNote(vault: Vault, date?: string): Note {
   const day = date ?? todayISO();
@@ -26,12 +47,15 @@ export function getDailyNote(vault: Vault, date?: string): Note {
   const existing = vault.get(rel);
   if (existing) return existing;
   const tpl = vault.template("daily");
-  const body = tpl ? renderTemplate(tpl, { date: day, title: day }) : DAILY_TEMPLATE;
+  const { frontmatter, body } = tpl
+    ? templateParts(renderTemplate(tpl, { date: day, title: day }))
+    : { frontmatter: {}, body: DAILY_TEMPLATE };
   try {
     return vault.createNote({
       title: day,
       type: "daily",
       folder: vault.config.folders.daily,
+      frontmatter,
       body,
     });
   } catch (error) {

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { autoCommit } from "../src/core/git.js";
+import { autoCommit, settlePushes } from "../src/core/git.js";
 import { initVault } from "../src/core/scaffold.js";
 import { addTask, completeTask } from "../src/core/tasks.js";
 import { Vault } from "../src/core/vault.js";
@@ -173,7 +173,7 @@ describe("auto-commit", () => {
     expect(git(["log", "-1", "--pretty=%s"]).trim()).toMatch(/^big-brain: complete task/);
   });
 
-  it("logs a failed push and keeps the successful local commit", () => {
+  it("logs a failed push and keeps the successful local commit", async () => {
     enableAutoCommit(true);
     git(["remote", "add", "origin", path.join(dir, "missing-remote.git")]);
     const vault = new Vault(dir);
@@ -185,6 +185,7 @@ describe("auto-commit", () => {
         vault.createNote({ title: "Push Failure", body: "saved locally" }),
       ).not.toThrow();
       expect(commitCount()).toBe(before + 1);
+      await settlePushes();
       expect(errorSpy).toHaveBeenCalledWith(
         expect.stringContaining("auto-push failed (commit kept locally)"),
       );
@@ -215,5 +216,55 @@ describe("auto-commit", () => {
     } finally {
       fs.rmSync(plain, { recursive: true, force: true });
     }
+  });
+});
+
+describe("background push", () => {
+  let remoteDir: string;
+
+  beforeEach(() => {
+    remoteDir = fs.mkdtempSync(path.join(os.tmpdir(), "bb-remote-"));
+    execFileSync("git", ["init", "-q", "--bare", "-b", "main", remoteDir]);
+  });
+
+  afterEach(async () => {
+    await settlePushes();
+    fs.rmSync(remoteDir, { recursive: true, force: true });
+  });
+
+  it("returns before a slow push finishes, then pushes", async () => {
+    enableAutoCommit(true);
+    git(["remote", "add", "origin", remoteDir]);
+    git(["push", "-q", "-u", "origin", "main"]);
+    // A pre-push hook stands in for a slow network.
+    fs.writeFileSync(path.join(dir, ".git", "hooks", "pre-push"), "#!/bin/sh\nsleep 1\n", {
+      mode: 0o755,
+    });
+    const vault = new Vault(dir);
+    const started = Date.now();
+    vault.createNote({ title: "Fast Save", body: "x" });
+    expect(Date.now() - started).toBeLessThan(900);
+    await settlePushes();
+    const remoteHead = execFileSync("git", ["--git-dir", remoteDir, "log", "-1", "--pretty=%s"], {
+      encoding: "utf8",
+    });
+    expect(remoteHead.trim()).toBe("big-brain: create notes/Fast Save.md");
+  });
+
+  it("coalesces commits made during a push so the last one is pushed", async () => {
+    enableAutoCommit(true);
+    git(["remote", "add", "origin", remoteDir]);
+    git(["push", "-q", "-u", "origin", "main"]);
+    fs.writeFileSync(path.join(dir, ".git", "hooks", "pre-push"), "#!/bin/sh\nsleep 0.3\n", {
+      mode: 0o755,
+    });
+    const vault = new Vault(dir);
+    for (const n of [1, 2, 3]) vault.createNote({ title: `Burst ${n}`, body: "x" });
+    await settlePushes();
+    const local = git(["rev-parse", "HEAD"]).trim();
+    const remote = execFileSync("git", ["--git-dir", remoteDir, "rev-parse", "main"], {
+      encoding: "utf8",
+    }).trim();
+    expect(remote).toBe(local);
   });
 });

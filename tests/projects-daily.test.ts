@@ -75,3 +75,30 @@ describe("safe filenames", () => {
     expect(safeFilename(title)).toBe("a".repeat(119));
   });
 });
+
+describe("templates with their own frontmatter", () => {
+  const tpl = "---\ntags: [from-template]\ncustom: kept\ntype: wrong\n---\n## Log\n{{date}}\n";
+
+  it("merges a daily template's frontmatter instead of nesting a second block", () => {
+    fs.writeFileSync(path.join(dir, "templates", "daily.md"), tpl);
+    const note = getDailyNote(vault, "2026-10-10");
+    expect(note.frontmatter).toMatchObject({ type: "daily", custom: "kept" });
+    expect(note.tags).toEqual(["from-template"]);
+    expect(note.body).toBe("\n## Log\n2026-10-10\n");
+    expect(note.raw.match(/^---$/gm)).toHaveLength(2);
+  });
+
+  it("merges a project template's frontmatter and tags with the project's own", () => {
+    fs.writeFileSync(path.join(dir, "templates", "project.md"), tpl);
+    const note = createProject(vault, { title: "Templated", tags: ["mine"], status: "paused" });
+    expect(note.frontmatter).toMatchObject({ type: "project", status: "paused", custom: "kept" });
+    expect(note.tags).toEqual(["from-template", "mine"]);
+    expect(note.raw.match(/^---$/gm)).toHaveLength(2);
+  });
+
+  it("uses a template with unparseable frontmatter whole, as before", () => {
+    fs.writeFileSync(path.join(dir, "templates", "daily.md"), "---\nbad: [\n---\n## Log\n");
+    const note = getDailyNote(vault, "2026-10-11");
+    expect(note.raw).toContain("bad: [");
+  });
+});

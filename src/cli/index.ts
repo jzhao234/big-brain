@@ -341,15 +341,24 @@ program
   .option("--done", "only completed tasks")
   .option("-p, --project <ref>", "only tasks in this project")
   .option("--due-by <date>", "due on or before YYYY-MM-DD")
+  .option("-t, --tag <tag>", "only tasks with this #tag")
   .option("--json", "JSON output")
   .action(
-    (opts: { all?: boolean; done?: boolean; project?: string; dueBy?: string; json?: boolean }) => {
+    (opts: {
+      all?: boolean;
+      done?: boolean;
+      project?: string;
+      dueBy?: string;
+      tag?: string;
+      json?: boolean;
+    }) => {
       try {
         const vault = openVault();
         const tasks = listTasks(vault, {
           status: opts.done ? "done" : opts.all ? "all" : "open",
           project: opts.project,
           dueBy: opts.dueBy,
+          tag: opts.tag,
         });
         if (opts.json) return console.log(JSON.stringify(tasks, null, 2));
         if (tasks.length === 0) return console.log(pc.dim("No tasks."));

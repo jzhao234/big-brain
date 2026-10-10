@@ -1,6 +1,6 @@
 import { getDailyNote } from "./daily.js";
 import type { TaskItem, TaskPriority } from "./types.js";
-import { isCalendarDate, todayISO } from "./util.js";
+import { isCalendarDate, nameKey, todayISO } from "./util.js";
 import type { Vault } from "./vault.js";
 
 export interface TaskFilter {
@@ -16,6 +16,10 @@ export interface TaskFilter {
 
 export function listTasks(vault: Vault, filter: TaskFilter = {}): TaskItem[] {
   const status = filter.status ?? "open";
+  // Dates compare as strings, so a malformed cutoff would silently misfilter.
+  if (filter.dueBy !== undefined && !isCalendarDate(filter.dueBy)) {
+    throw new Error(`Invalid due-by date (want YYYY-MM-DD): ${filter.dueBy}`);
+  }
   let projectPath: string | undefined;
   if (filter.project) {
     const note = vault.get(filter.project);
@@ -99,12 +103,19 @@ export interface CompleteResult {
   file: string;
 }
 
-/** Find exactly one task by id, falling back to a case-insensitive text fragment. */
+/**
+ * Find exactly one task by id, then by its whole text, then by a text
+ * fragment (all case-insensitive), so "Call Bob" still names that task when
+ * "Call Bob about invoice" also exists.
+ */
 function resolveTask(candidates: TaskItem[], idOrText: string, kind: string): TaskItem {
   let matches = candidates.filter((t) => t.id === idOrText);
-  if (matches.length === 0) {
-    const needle = idOrText.trim().toLowerCase();
-    if (needle !== "") matches = candidates.filter((t) => t.text.toLowerCase().includes(needle));
+  const needle = nameKey(idOrText);
+  if (matches.length === 0 && needle !== "") {
+    matches = candidates.filter((t) => nameKey(t.text) === needle);
+    if (matches.length === 0) {
+      matches = candidates.filter((t) => t.text.toLowerCase().includes(needle));
+    }
   }
   if (matches.length === 0) throw new Error(`No ${kind}task matches: ${idOrText}`);
   if (matches.length > 1) {
