@@ -1,8 +1,9 @@
 import path from "node:path";
-import { parseFrontmatter } from "./frontmatter.js";
+import { frontmatterEnd, parseFrontmatter } from "./frontmatter.js";
 import type { Heading, Note, NoteLink, TaskItem } from "./types.js";
 import {
   asStringArray,
+  fencedLines,
   makeExcerpt,
   nameKey,
   shortHash,
@@ -15,9 +16,6 @@ import {
 const WIKILINK_RE = /\[\[([^\]|#\n]+)(?:#([^\]|\n]+))?(?:\|([^\]\n]+))?\]\]/g;
 const TAG_RE = /(^|[\s(])#([A-Za-z][\w/-]*)/g;
 const HEADING_RE = /^(#{1,6})\s+(.*)$/;
-// A backtick fence's info string may not contain backticks (CommonMark).
-const FENCE_OPEN_RE = /^\s{0,3}(`{3,}(?=[^`]*$)|~{3,})/;
-const FENCE_CLOSE_RE = /^\s{0,3}(`{3,}|~{3,})\s*$/;
 const TASK_RE = /^\s*[-*] \[([ xX/\-])\]\s+(.*)$/;
 
 // Each marker may carry a VS16 (U+FE0F) emoji-presentation selector.
@@ -70,30 +68,23 @@ function cleanTaskText(text: string): string {
     .trim();
 }
 
+/**
+ * Checkbox tasks in `text`, skipping fenced code. `lineOffset` is the line of
+ * the file where `text` starts, so each task's `line` indexes the whole file.
+ */
 export function extractTasks(
-  raw: string,
+  text: string,
   file: string,
   noteTitle: string,
   noteType: string,
+  lineOffset = 0,
 ): TaskItem[] {
   const tasks: TaskItem[] = [];
   const seen = new Map<string, number>();
-  const lines = raw.split("\n");
-  // Open fence marker (e.g. "```ts" or "~~~~"). Per CommonMark, only a bare run
-  // of the same character, at least as long, closes it.
-  let fence: string | undefined;
+  const lines = text.split("\n");
+  const fenced = fencedLines(lines);
   lines.forEach((line, i) => {
-    if (fence === undefined) {
-      const open = FENCE_OPEN_RE.exec(line);
-      if (open) {
-        fence = open[1]!;
-        return;
-      }
-    } else {
-      const close = FENCE_CLOSE_RE.exec(line)?.[1];
-      if (close && close[0] === fence[0] && close.length >= fence.length) fence = undefined;
-      return;
-    }
+    if (fenced[i]) return;
     const m = TASK_RE.exec(line);
     if (!m) return;
     const status = m[1]!;
@@ -114,7 +105,7 @@ export function extractTasks(
       done: status.toLowerCase() === "x",
       cancelled: status === "-",
       file,
-      line: i,
+      line: lineOffset + i,
       due: DUE_RE.exec(rest)?.[1],
       scheduled: SCHEDULED_RE.exec(rest)?.[1],
       completedOn: DONE_RE.exec(rest)?.[1],
@@ -156,15 +147,20 @@ export function parseNote(input: ParseInput): Note {
   const text = toLF(raw);
   let fm: Record<string, unknown> = {};
   let body = text;
+  let frontmatterError: string | undefined;
   try {
     const parsed = parseFrontmatter(text);
     fm = parsed.data;
     body = parsed.content;
-  } catch {
-    // Malformed frontmatter: treat the whole file as body rather than crashing the vault.
-    fm = {};
-    body = text;
+  } catch (err) {
+    // Malformed frontmatter: keep the vault readable, keep the block out of the
+    // body (so its lines aren't read as tasks or headings), and record why, so
+    // writes that would re-serialize the frontmatter can refuse instead of dropping it.
+    frontmatterError = err instanceof Error ? err.message : String(err);
+    body = text.slice(frontmatterEnd(text) ?? 0);
   }
+  // The body is always a suffix of `text`: its line i is line bodyLine + i of the file.
+  const bodyLine = text.slice(0, text.length - body.length).split("\n").length - 1;
 
   const stem = path.basename(relPath, ".md");
   const headings = extractHeadings(body);
@@ -185,9 +181,11 @@ export function parseNote(input: ParseInput): Note {
     tags,
     aliases: asStringArray(fm.aliases),
     links: extractLinks(body),
-    tasks: extractTasks(text, posixPath, title, type),
+    tasks: extractTasks(body, posixPath, title, type, bodyLine),
     headings,
     body,
+    bodyLine,
+    ...(frontmatterError !== undefined ? { frontmatterError } : {}),
     raw,
     mtimeMs,
     archived: posixPath === archiveFolder || posixPath.startsWith(`${archiveFolder}/`),

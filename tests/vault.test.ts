@@ -429,3 +429,109 @@ describe("doctor and overview", () => {
     expect(o.activeProjects.map((p) => p.title)).toContain("Ov");
   });
 });
+
+describe("frontmatter and section boundaries", () => {
+  const write = (rel: string, raw: string) => {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), raw);
+    vault.refresh();
+  };
+  const read = (rel: string) => fs.readFileSync(path.join(dir, rel), "utf8");
+
+  it("appends under a heading in a BOM-prefixed note without touching the YAML", () => {
+    write("notes/Bom.md", "﻿---\ntype: note\n---\n## Tasks\nold\n## Next\nend\n");
+    vault.appendToNote("notes/Bom.md", "insert", "Tasks");
+    expect(read("notes/Bom.md")).toBe(
+      "﻿---\ntype: note\n---\n## Tasks\nold\ninsert\n## Next\nend\n",
+    );
+  });
+
+  it("appends into the right section when the frontmatter is malformed", () => {
+    write("notes/Bad.md", "---\ntitle: a: b\n---\n## Log\n\nold\n\n## Other\n\nx\n");
+    vault.appendToNote("notes/Bad.md", "NEW", "Log");
+    expect(read("notes/Bad.md")).toBe(
+      "---\ntitle: a: b\n---\n## Log\n\nold\nNEW\n\n## Other\n\nx\n",
+    );
+  });
+
+  it("does not treat a heading inside a ~~~ fence as a section", () => {
+    write(
+      "notes/Fence.md",
+      "# Fence\n\n## Log\n\n~~~bash\n# a comment\n~~~\n\nend of log\n\n## Next\n",
+    );
+    vault.appendToNote("notes/Fence.md", "NEW", "Log");
+    expect(read("notes/Fence.md")).toBe(
+      "# Fence\n\n## Log\n\n~~~bash\n# a comment\n~~~\n\nend of log\nNEW\n\n## Next\n",
+    );
+    vault.appendToNote("notes/Fence.md", "made", "a comment");
+    expect(read("notes/Fence.md")).toMatch(/## Next\n\n## a comment\n\nmade\n$/);
+  });
+
+  it("refuses to rewrite the body or frontmatter of a note whose YAML doesn't parse", () => {
+    const raw = "---\ntags: [broken\n---\nbody\n";
+    write("notes/Broken.md", raw);
+    expect(() => vault.replaceBody("notes/Broken.md", "replacement")).toThrow(
+      /malformed frontmatter/,
+    );
+    expect(() => vault.updateFrontmatter("notes/Broken.md", { status: "x" })).toThrow(
+      /malformed frontmatter/,
+    );
+    expect(read("notes/Broken.md")).toBe(raw);
+  });
+
+  it("keeps the text of a note that opens with a --- rule and never closes it", () => {
+    write("notes/Rule.md", "---\nMeeting notes after a rule\n\n- [ ] follow up\n");
+    expect(vault.get("notes/Rule.md")!.body).toContain("Meeting notes");
+    vault.updateFrontmatter("notes/Rule.md", { status: "active" });
+    const raw = read("notes/Rule.md");
+    expect(raw).toContain("status: active");
+    expect(raw).toContain("Meeting notes after a rule");
+    expect(raw).toContain("- [ ] follow up");
+  });
+
+  it("does not list checkboxes inside a frontmatter block scalar as tasks", () => {
+    write("notes/Fm.md", "---\nexample: |\n  - [ ] sample\n---\n- [ ] real\n");
+    const tasks = vault.get("notes/Fm.md")!.tasks;
+    expect(tasks.map((t) => [t.text, t.line])).toEqual([["real", 4]]);
+    completeTask(vault, tasks[0]!.id);
+    expect(read("notes/Fm.md")).toMatch(
+      /^---\nexample: \|\n {2}- \[ \] sample\n---\n- \[x\] real ✅/,
+    );
+  });
+
+  it("completes a task on a CRLF line in a mostly-LF note", () => {
+    write("notes/Mixed.md", "intro\n\n- [ ] mixed\r\n\nend\n");
+    const [task] = vault.get("notes/Mixed.md")!.tasks;
+    expect(completeTask(vault, task!.id).task.done).toBe(true);
+    expect(read("notes/Mixed.md")).toMatch(
+      /^intro\n\n- \[x\] mixed ✅ \d{4}-\d{2}-\d{2}\n\nend\n$/,
+    );
+  });
+});
+
+describe("duplicate task texts", () => {
+  it("returns the task that was just added, not an older one with the same text", () => {
+    createProject(vault, { title: "Dup" });
+    const first = addTask(vault, { text: "same", note: "Dup" });
+    const second = addTask(vault, { text: "same", note: "Dup" });
+    expect(second.id).not.toBe(first.id);
+    expect(second.line).toBe(first.line + 1);
+  });
+
+  it("refuses to complete a duplicate whose line changed after it was matched", () => {
+    const rel = "notes/Twins.md";
+    const abs = path.join(dir, rel);
+    fs.writeFileSync(abs, "- [ ] same 📅 2026-10-11\n- [ ] same 📅 2026-10-12\n");
+    vault.refresh();
+    const first = vault.get(rel)!.tasks[0]!;
+    // Another editor deletes the first copy after the task was matched but
+    // before the write: the second copy now carries the matched id.
+    const mutate = vault.mutateNote.bind(vault);
+    vi.spyOn(vault, "mutateNote").mockImplementation((ref, operation, fn) => {
+      fs.writeFileSync(abs, "- [ ] same 📅 2026-10-12\n");
+      return mutate(ref, operation, fn);
+    });
+    expect(() => completeTask(vault, first.id)).toThrow(/changed before it could be updated/);
+    expect(fs.readFileSync(abs, "utf8")).toBe("- [ ] same 📅 2026-10-12\n");
+  });
+});

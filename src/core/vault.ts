@@ -242,12 +242,13 @@ export class Vault {
     const updated = withNoteLock(this.dir, notePath, () => {
       const note = this.reloadPath(notePath);
       if (!note) throw new Error(`Note changed or moved before it could be written: ${notePath}`);
-      // Mutations work on LF text; the result is written back with the file's
+      // Mutations always work on LF text (even a minority of CRLF lines would
+      // break line-based edits); the result is written back with the file's
       // dominant line ending, so editing a CRLF note never flips it to LF. (A
       // file mixing both is normalized to whichever it mostly uses.)
       const crlf = usesCRLF(note.raw);
-      const next = mutate(crlf ? { ...note, raw: toLF(note.raw) } : note);
-      atomicWriteFile(note.absPath, crlf ? toLF(next).replace(/\n/g, "\r\n") : next);
+      const next = toLF(mutate({ ...note, raw: toLF(note.raw) }));
+      atomicWriteFile(note.absPath, crlf ? next.replace(/\n/g, "\r\n") : next);
       const reloaded = this.reloadPath(notePath);
       if (!reloaded) throw new Error(`Failed to read back updated note: ${notePath}`);
       return reloaded;
@@ -262,42 +263,51 @@ export class Vault {
    * otherwise appends to the end of the file.
    */
   appendToNote(ref: string, text: string, heading?: string): Note {
+    return this.appendBlock(ref, text, heading).note;
+  }
+
+  /** appendToNote, also returning the 0-based file line where the block starts. */
+  appendBlock(ref: string, text: string, heading?: string): { note: Note; line: number } {
     const block = text.replace(/\s+$/, "");
-    return this.mutateNote(ref, "append", (note) => {
+    let line = -1;
+    const note = this.mutateNote(ref, "append", (note) => {
       let raw = note.raw;
-      if (heading) {
+      const target = heading
+        ? note.headings.find((h) => nameKey(h.text) === nameKey(heading))
+        : undefined;
+      if (target) {
         const lines = raw.split("\n");
-        const fmOffset = raw.startsWith("---") ? countFrontmatterLines(raw) : 0;
-        const target = note.headings.find((h) => nameKey(h.text) === nameKey(heading));
-        if (!target) {
-          raw = `${raw.replace(/\s+$/, "")}\n\n## ${heading}\n\n${block}\n`;
-        } else {
-          const startLine = fmOffset + target.line;
-          let endLine = lines.length;
-          for (const h of note.headings) {
-            if (h.line > target.line && h.depth <= target.depth) {
-              endLine = fmOffset + h.line;
-              break;
-            }
+        // Heading lines count from the start of the body; this is where it starts in the file.
+        const startLine = note.bodyLine + target.line;
+        let endLine = lines.length;
+        for (const h of note.headings) {
+          if (h.line > target.line && h.depth <= target.depth) {
+            endLine = note.bodyLine + h.line;
+            break;
           }
-          // Trim trailing blank lines inside the section, insert, keep one blank line after.
-          let insertAt = endLine;
-          while (insertAt > startLine + 1 && (lines[insertAt - 1] ?? "").trim() === "") {
-            insertAt--;
-          }
-          lines.splice(insertAt, 0, block);
-          raw = lines.join("\n");
         }
+        // Trim trailing blank lines inside the section, insert, keep one blank line after.
+        let insertAt = endLine;
+        while (insertAt > startLine + 1 && (lines[insertAt - 1] ?? "").trim() === "") {
+          insertAt--;
+        }
+        lines.splice(insertAt, 0, block);
+        raw = lines.join("\n");
+        line = insertAt;
       } else {
-        raw = `${raw.replace(/\s+$/, "")}\n\n${block}\n`;
+        const prefix = `${raw.replace(/\s+$/, "")}\n\n${heading ? `## ${heading}\n\n` : ""}`;
+        raw = `${prefix}${block}\n`;
+        line = prefix.split("\n").length - 1;
       }
       return raw.endsWith("\n") ? raw : `${raw}\n`;
     });
+    return { note, line };
   }
 
   /** Merge keys into a note's frontmatter (set a key to null to delete it). */
   updateFrontmatter(ref: string, updates: Record<string, unknown>): Note {
     return this.mutateNote(ref, "update frontmatter", (note) => {
+      assertFrontmatterReadable(note);
       const fm = { ...note.frontmatter };
       for (const [k, v] of Object.entries(updates)) {
         if (v === null) delete fm[k];
@@ -309,9 +319,10 @@ export class Vault {
 
   /** Replace a note's body (frontmatter preserved). */
   replaceBody(ref: string, body: string): Note {
-    return this.mutateNote(ref, "rewrite", (note) =>
-      stringifyNote(`\n${body.replace(/^\n+/, "")}`, note.frontmatter),
-    );
+    return this.mutateNote(ref, "rewrite", (note) => {
+      assertFrontmatterReadable(note);
+      return stringifyNote(`\n${body.replace(/^\n+/, "")}`, note.frontmatter);
+    });
   }
 
   /** Move a note into the archive folder (non-destructive delete). */
@@ -393,11 +404,11 @@ function usesCRLF(raw: string): boolean {
   return crlf > 0 && crlf * 2 >= all;
 }
 
-function countFrontmatterLines(raw: string): number {
-  const lines = raw.split("\n");
-  if ((lines[0] ?? "").trim() !== "---") return 0;
-  for (let i = 1; i < lines.length; i++) {
-    if ((lines[i] ?? "").trim() === "---") return i + 1;
+/** Writes that re-serialize frontmatter would drop a block that didn't parse. */
+function assertFrontmatterReadable(note: Note): void {
+  if (note.frontmatterError !== undefined) {
+    throw new Error(
+      `${note.path} has malformed frontmatter (${note.frontmatterError}); fix the YAML before changing its frontmatter or body`,
+    );
   }
-  return 0;
 }

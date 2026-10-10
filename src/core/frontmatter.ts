@@ -18,7 +18,13 @@ const SCHEMA = yaml.CORE_SCHEMA.extend({ implicit: [MERGE] });
 const yamlEngine = {
   parse: (input: string): object => {
     const data = yaml.load(input, { schema: SCHEMA });
-    return data !== null && typeof data === "object" ? data : {};
+    if (data === null || data === undefined) return {};
+    // A scalar or list has no keys to keep: reading it as {} would let the
+    // next frontmatter write silently replace whatever the user wrote there.
+    if (typeof data !== "object" || Array.isArray(data)) {
+      throw new Error("Frontmatter must be a YAML mapping (key: value lines)");
+    }
+    return data;
   },
   stringify: (data: object): string => yaml.dump(data, { schema: SCHEMA }),
 };
@@ -30,8 +36,30 @@ export interface ParsedFrontmatter {
   content: string;
 }
 
+/**
+ * Offset in `raw` where the body starts after a frontmatter block, or
+ * undefined when the file has none. Same delimiter rules as gray-matter
+ * (leading BOM skipped, `----` is not an opener, the block ends at the first
+ * line starting with `---`), except that an opener with no closing delimiter
+ * is not frontmatter: a note that merely begins with a `---` rule keeps its
+ * text as body instead of having all of it read as YAML.
+ */
+export function frontmatterEnd(raw: string): number | undefined {
+  const start = raw.charCodeAt(0) === 0xfeff ? 1 : 0;
+  if (!raw.startsWith("---", start) || raw.charAt(start + 3) === "-") return undefined;
+  const close = raw.indexOf("\n---", start + 3);
+  if (close === -1) return undefined;
+  let end = close + 4;
+  if (raw[end] === "\r") end++;
+  if (raw[end] === "\n") end++;
+  return end;
+}
+
 /** Split a markdown file into frontmatter data and body. Throws on malformed YAML. */
 export function parseFrontmatter(raw: string): ParsedFrontmatter {
+  if (frontmatterEnd(raw) === undefined) {
+    return { data: {}, content: raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw };
+  }
   // Passing options also bypasses gray-matter's shared parse cache, whose
   // cached `data` objects would otherwise be aliased across callers.
   const parsed = matter(raw, OPTIONS);
@@ -40,7 +68,14 @@ export function parseFrontmatter(raw: string): ParsedFrontmatter {
 
 /** Serialize a body and frontmatter data back into a markdown file. */
 export function stringifyNote(body: string, data: Record<string, unknown>): string {
-  return matter.stringify(body, data, OPTIONS);
+  // A string would be re-parsed for frontmatter first, so a body that itself
+  // opens with `---` lost its first section; a file object is taken as is.
+  const out = matter.stringify({ content: body }, data, OPTIONS);
+  // With no keys, no block is written; keep an empty one when the body would
+  // otherwise read back as frontmatter.
+  return Object.keys(data).length === 0 && frontmatterEnd(out) !== undefined
+    ? `---\n---\n${out}`
+    : out;
 }
 
 // YAML's own null spellings, plus nothing at all. `nUlL` is a string in YAML.
