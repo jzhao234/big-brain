@@ -611,12 +611,65 @@ describe("write paths stay inside a visible vault", () => {
     expect(fs.existsSync(path.join(dir, "..", "escaped"))).toBe(false);
   });
 
-  it("puts the note back when the archive folder is hidden from the vault", () => {
+  it("refuses a hidden archive folder before moving anything", () => {
     vault.createNote({ title: "Back" });
     vault.config.folders.archive = ".archive";
-    expect(() => vault.archiveNote("Back")).toThrow(/note left in place/);
-    expect(fs.existsSync(path.join(dir, "notes", "Back.md"))).toBe(true);
+    expect(() => vault.archiveNote("Back")).toThrow(/hidden from the vault/);
+    expect(fs.existsSync(path.join(dir, ".archive"))).toBe(false);
     expect(vault.get("Back")?.path).toBe("notes/Back.md");
+  });
+
+  it("puts the note back when an ignore glob hides the archive folder", () => {
+    vault.createNote({ title: "Back" });
+    vault.config.folders.archive = "old";
+    vault.config.ignore = ["old/**"];
+    expect(() => vault.archiveNote("Back")).toThrow(/note left in place/);
+    expect(vault.get("Back")?.path).toBe("notes/Back.md");
+    expect(fs.existsSync(path.join(dir, "old", "notes", "Back.md"))).toBe(false);
+  });
+
+  it("undoes a create hidden by an ignore glob, but not someone else's write", () => {
+    vault.config.ignore = ["private/**"];
+    expect(() => vault.createNote({ title: "Mine", folder: "private" })).toThrow(/ignored/);
+    expect(fs.existsSync(path.join(dir, "private", "Mine.md"))).toBe(false);
+
+    // An editor saves to the same path between our write and the undo.
+    const reload = vi.spyOn(vault as unknown as { reloadPath: () => unknown }, "reloadPath");
+    reload.mockImplementationOnce(() => {
+      fs.writeFileSync(path.join(dir, "private", "Theirs.md"), "editor's text\n");
+      return undefined;
+    });
+    expect(() => vault.createNote({ title: "Theirs", folder: "private" })).toThrow(/ignored/);
+    expect(fs.readFileSync(path.join(dir, "private", "Theirs.md"), "utf8")).toBe("editor's text\n");
+  });
+
+  it("skips a colliding directory when creating a unique note", () => {
+    fs.mkdirSync(path.join(dir, "inbox", "Dir.md"));
+    expect(vault.createNote({ title: "Dir", folder: "inbox", unique: true }).path).toBe(
+      "inbox/Dir 2.md",
+    );
+  });
+
+  it("re-checks containment under the lock, after a folder is swapped for a link", () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "bb-outside-"));
+    try {
+      fs.mkdirSync(path.join(dir, "safe"));
+      fs.writeFileSync(path.join(dir, "safe", "A.md"), "inside\n");
+      fs.writeFileSync(path.join(outside, "A.md"), "outside\n");
+      fs.symlinkSync(path.join(dir, "safe"), path.join(dir, "notes", "link"));
+      vault.refresh();
+      expect(() =>
+        vault.mutateNote("notes/link/A.md", "append", (note) => {
+          // Retarget the link while this write holds the lock.
+          fs.unlinkSync(path.join(dir, "notes", "link"));
+          fs.symlinkSync(outside, path.join(dir, "notes", "link"));
+          return `${note.raw}escaped\n`;
+        }),
+      ).toThrow(/outside the vault/);
+      expect(fs.readFileSync(path.join(outside, "A.md"), "utf8")).toBe("outside\n");
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
   });
 });
 
