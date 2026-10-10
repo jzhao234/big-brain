@@ -1,6 +1,7 @@
+import { renderTemplate, templateParts } from "./daily.js";
 import { compareTasks } from "./tasks.js";
 import type { Note, ProjectStatus, TaskItem } from "./types.js";
-import { todayISO } from "./util.js";
+import { asStringArray, isCalendarDate, todayISO, uniq } from "./util.js";
 import type { Vault } from "./vault.js";
 
 export interface ProjectSummary {
@@ -73,18 +74,21 @@ export interface CreateProjectInput {
 }
 
 export function createProject(vault: Vault, input: CreateProjectInput): Note {
+  if (input.due !== undefined && !isCalendarDate(input.due)) {
+    throw new Error(`Invalid due date (want YYYY-MM-DD): ${input.due}`);
+  }
   const tpl = vault.template("project");
   const goal = input.goal?.trim() ?? "";
-  const body = tpl
-    ? tpl
-        .replace(/\{\{\s*goal\s*\}\}/g, () => goal)
-        .replace(/\{\{\s*title\s*\}\}/g, () => input.title)
-    : `## Goal\n\n${goal}\n\n## Tasks\n\n## Notes\n\n## Log\n`;
+  const { frontmatter, body } = tpl
+    ? templateParts(renderTemplate(tpl, { goal, title: input.title, date: todayISO() }))
+    : { frontmatter: {}, body: `## Goal\n\n${goal}\n\n## Tasks\n\n## Notes\n\n## Log\n` };
+  const { tags: templateTags, ...templateFields } = frontmatter;
   return vault.createNote({
     title: input.title,
     type: "project",
-    tags: input.tags,
+    tags: uniq([...asStringArray(templateTags), ...(input.tags ?? [])]),
     frontmatter: {
+      ...templateFields,
       status: input.status ?? "active",
       started: todayISO(),
       ...(input.area ? { area: input.area } : {}),

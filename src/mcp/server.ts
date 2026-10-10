@@ -15,6 +15,11 @@ function text(s: string) {
   return { content: [{ type: "text" as const, text: s }] };
 }
 
+/** A failed lookup, flagged so clients can tell it from a result without parsing prose. */
+function toolError(s: string) {
+  return { ...text(s), isError: true };
+}
+
 function json(v: unknown) {
   return text(JSON.stringify(v, null, 2));
 }
@@ -132,7 +137,7 @@ export function buildServer(vault: Vault): McpServer {
     async ({ ref }) =>
       fresh(() => {
         const note = vault.get(ref);
-        if (!note) return text(`Note not found: ${ref}. Try search_notes first.`);
+        if (!note) return toolError(`Note not found: ${ref}. Try search_notes first.`);
         return text(renderNote(note));
       }),
   );
@@ -332,7 +337,7 @@ export function buildServer(vault: Vault): McpServer {
     async ({ ref }) =>
       fresh(() => {
         const note = vault.get(ref);
-        if (!note) return text(`Note not found: ${ref}`);
+        if (!note) return toolError(`Note not found: ${ref}`);
         const outgoing = note.links.map((l) => {
           const target = vault.resolveLink(l);
           return { target: l.target, resolved: target?.path ?? null };

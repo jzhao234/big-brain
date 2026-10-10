@@ -289,8 +289,30 @@ describe("projects and tasks", () => {
     addTask(vault, { text: "unique task alpha", note: "P" });
     addTask(vault, { text: "twin task", note: "P" });
     addTask(vault, { text: "twin task again", note: "P" });
-    expect(() => completeTask(vault, "twin task")).toThrow(/Ambiguous/);
+    expect(() => completeTask(vault, "twin")).toThrow(/Ambiguous/);
     expect(completeTask(vault, "alpha").task.text).toBe("unique task alpha");
+  });
+
+  it("prefers a task's whole text over longer tasks that contain it", () => {
+    createProject(vault, { title: "Bob" });
+    addTask(vault, { text: "Call Bob", note: "Bob" });
+    addTask(vault, { text: "Call Bob about invoice", note: "Bob" });
+    expect(completeTask(vault, "call bob").task.text).toBe("Call Bob");
+    expect(updateTask(vault, "Call Bob about invoice", { due: "2026-11-01" }).task.due).toBe(
+      "2026-11-01",
+    );
+    addTask(vault, { text: "Call Bob", note: "Bob" });
+    addTask(vault, { text: "Call Bob", note: "Bob" });
+    expect(() => completeTask(vault, "Call Bob")).toThrow(/Ambiguous/);
+  });
+
+  it("rejects malformed or impossible dates in task filters and projects", () => {
+    expect(() => listTasks(vault, { dueBy: "2026-1-5" })).toThrow(/Invalid due-by/);
+    expect(() => listTasks(vault, { dueBy: "2026-02-30" })).toThrow(/Invalid due-by/);
+    expect(() => createProject(vault, { title: "Impossible", due: "2026-02-30" })).toThrow(
+      /Invalid due date/,
+    );
+    expect(vault.get("Impossible")).toBeUndefined();
   });
 
   it("lists tasks with dueBy filter", () => {
@@ -605,10 +627,11 @@ describe("write paths stay inside a visible vault", () => {
 
   it("refuses an archive folder outside the vault and leaves the note in place", () => {
     vault.createNote({ title: "Stay" });
-    vault.config.folders.archive = "../escaped";
+    const escaped = `escaped-${path.basename(dir)}`;
+    vault.config.folders.archive = `../${escaped}`;
     expect(() => vault.archiveNote("Stay")).toThrow(/inside the vault/);
     expect(fs.existsSync(path.join(dir, "notes", "Stay.md"))).toBe(true);
-    expect(fs.existsSync(path.join(dir, "..", "escaped"))).toBe(false);
+    expect(fs.existsSync(path.join(dir, "..", escaped))).toBe(false);
   });
 
   it("refuses a hidden archive folder before moving anything", () => {
