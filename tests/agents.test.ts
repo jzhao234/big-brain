@@ -203,6 +203,68 @@ describe("installAgent: JSON settings (three-way)", () => {
   const settings = () => JSON.parse(fs.readFileSync(settingsFile(), "utf8"));
   const fragment = (obj: unknown) => profile("claude", "settings.json", JSON.stringify(obj));
 
+  it.each(["__proto__", "constructor", "prototype"])(
+    "rejects unsafe %s fragment keys even during dry run",
+    (key) => {
+      profile("claude", "settings.json", `{"${key}":{"bbPolluted":true}}`);
+      write(settingsFile(), "{}");
+      try {
+        expect(() => installAgent(paths("claude"), { dryRun: true })).toThrow(/Unsafe setting/);
+        expect(Object.hasOwn(Object.prototype, "bbPolluted")).toBe(false);
+        expect(fs.readFileSync(settingsFile(), "utf8")).toBe("{}");
+        expect(fs.existsSync(paths("claude").stateFile)).toBe(false);
+      } finally {
+        Reflect.deleteProperty(Object.prototype, "bbPolluted");
+      }
+    },
+  );
+
+  it.each(["__proto__", "constructor", "prototype"])(
+    "rejects unsafe %s saved setting paths before writes",
+    (key) => {
+      write(settingsFile(), `{"group":{"${key}":{"bbSavedMarker":true}}}`);
+      try {
+        expect(() =>
+          saveToProfile(paths("claude"), vaultDir, [], [`group.${key}.bbSavedMarker`]),
+        ).toThrow(/Unsafe setting/);
+        expect(fs.existsSync(path.join(paths("claude").profile, "settings.json"))).toBe(false);
+        expect(fs.existsSync(paths("claude").stateFile)).toBe(false);
+      } finally {
+        Reflect.deleteProperty(Object.prototype, "bbSavedMarker");
+      }
+    },
+  );
+
+  it("ignores inherited settings when planning nested additions", () => {
+    const inherited = Object.create({ group: { value: "inherited" } });
+    const wanted = new Map([['key:["group","value"]', "new"]]);
+    expect(planSettings(inherited, wanted, {}, false)[0]?.action).toBe("add");
+  });
+
+  it.each([{ local: null }, { local: "local" }, { local: ["local"] }])(
+    "preserves a non-object ancestor %j unless replacement is requested",
+    ({ local }) => {
+      write(settingsFile(), JSON.stringify({ group: { nested: local }, unrelated: true }));
+      fragment({ group: { nested: { value: "vault" } } });
+      const report = installAgent(paths("claude"));
+      expect(report.settings.map((s) => s.action)).toEqual(["conflict"]);
+      expect(settings()).toEqual({ group: { nested: local }, unrelated: true });
+      installAgent(paths("claude"), { replace: true });
+      expect(settings()).toEqual({ group: { nested: { value: "vault" } }, unrelated: true });
+    },
+  );
+
+  it("preserves a managed scalar ancestor when the profile changes its shape", () => {
+    fragment({ group: "original" });
+    installAgent(paths("claude"));
+    fragment({ group: { value: "vault" } });
+    const report = installAgent(paths("claude"));
+    expect(report.settings.some((s) => s.action === "conflict")).toBe(true);
+    expect(settings()).toEqual({ group: "original" });
+    installAgent(paths("claude"), { replace: true });
+    expect(settings()).toEqual({ group: { value: "vault" } });
+  });
+
   it("adds missing keys and never touches other settings", () => {
     write(settingsFile(), JSON.stringify({ theme: "dark", modelSettings: { x: 1 } }, null, 2));
     fragment({ statusLine: { type: "command", command: "$HOME/.claude/statusline.sh" } });
@@ -288,6 +350,19 @@ describe("installAgent: JSON settings (three-way)", () => {
 
 describe("installAgent: TOML settings", () => {
   const config = () => path.join(home("codex"), "config.toml");
+  it("preserves a scalar table ancestor and replaces it only on request", () => {
+    write(config(), '# local preference\ntui = false\nmodel = "mine"\n');
+    profile("codex", "config.toml", '[tui]\nstatus_line = ["model"]\n');
+    const report = installAgent(paths("codex"));
+    expect(report.settings.some((s) => s.action === "conflict")).toBe(true);
+    expect(parseToml(fs.readFileSync(config(), "utf8"))).toEqual({ tui: false, model: "mine" });
+    installAgent(paths("codex"), { replace: true });
+    expect(parseToml(fs.readFileSync(config(), "utf8"))).toEqual({
+      tui: { status_line: ["model"] },
+      model: "mine",
+    });
+    expect(fs.readFileSync(config(), "utf8")).toContain("# local preference");
+  });
   const original = [
     "# my codex config",
     'model = "gpt-6-astra"',

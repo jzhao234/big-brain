@@ -470,8 +470,31 @@ export function leafLabel(leaf: Leaf): string {
     : `hook ${leaf.event}${leaf.matcher ? ` [${leaf.matcher}]` : ""}: ${leaf.command}`;
 }
 
+function checkSettingPath(keys: string[]): void {
+  if (keys.some((k) => k === "__proto__" || k === "constructor" || k === "prototype")) {
+    throw new Error(`Unsafe setting path: ${keys.join(".")}`);
+  }
+}
+
+function checkSettingKeys(value: Json, prefix: string[] = []): void {
+  if (Array.isArray(value)) {
+    for (const item of value) checkSettingKeys(item, prefix);
+  } else if (isPlainObject(value)) {
+    for (const [key, child] of Object.entries(value)) {
+      const keys = [...prefix, key];
+      checkSettingPath(keys);
+      checkSettingKeys(child, keys);
+    }
+  }
+}
+
+function own(obj: Record<string, Json>, key: string): Json | undefined {
+  return Object.hasOwn(obj, key) ? obj[key] : undefined;
+}
+
 /** Flatten a fragment into managed leaves and the values they should have. */
 export function fragmentLeaves(fragment: Record<string, Json>, agent: AgentDef): Map<string, Json> {
+  checkSettingKeys(fragment);
   const out = new Map<string, Json>();
   const walk = (obj: Record<string, Json>, prefix: string[]) => {
     for (const [k, v] of Object.entries(obj)) {
@@ -507,78 +530,98 @@ export function fragmentLeaves(fragment: Record<string, Json>, agent: AgentDef):
 }
 
 function getAt(obj: Record<string, Json>, leaf: Leaf): Json | undefined {
+  checkSettingPath(leaf.kind === "key" ? leaf.path : ["hooks", leaf.event]);
   if (leaf.kind === "key") {
     let cur: Json | undefined = obj;
     for (const k of leaf.path) {
       if (!isPlainObject(cur)) return undefined;
-      cur = cur[k];
+      cur = own(cur, k);
     }
     return cur;
   }
-  const groups = isPlainObject(obj.hooks) ? obj.hooks[leaf.event] : undefined;
+  const hooks = own(obj, "hooks");
+  const groups = isPlainObject(hooks) ? own(hooks, leaf.event) : undefined;
   if (!Array.isArray(groups)) return undefined;
   for (const g of groups) {
-    if (!isPlainObject(g) || !Array.isArray(g.hooks)) continue;
-    if ((typeof g.matcher === "string" ? g.matcher : "") !== leaf.matcher) continue;
-    const hook = g.hooks.find((h) => isPlainObject(h) && h.command === leaf.command);
+    if (!isPlainObject(g)) continue;
+    const items = own(g, "hooks");
+    const matcher = own(g, "matcher");
+    if (!Array.isArray(items) || (typeof matcher === "string" ? matcher : "") !== leaf.matcher)
+      continue;
+    const hook = items.find((h) => isPlainObject(h) && own(h, "command") === leaf.command);
     if (hook !== undefined) return hook;
   }
   return undefined;
 }
 
 function setAt(obj: Record<string, Json>, leaf: Leaf, value: Json): void {
+  checkSettingPath(leaf.kind === "key" ? leaf.path : ["hooks", leaf.event]);
   if (leaf.kind === "key") {
     let cur = obj;
     for (const k of leaf.path.slice(0, -1)) {
-      if (!isPlainObject(cur[k])) cur[k] = {};
+      if (!isPlainObject(own(cur, k))) cur[k] = {};
       cur = cur[k] as Record<string, Json>;
     }
     cur[leaf.path[leaf.path.length - 1] as string] = value;
     return;
   }
-  if (!isPlainObject(obj.hooks)) obj.hooks = {};
+  if (!isPlainObject(own(obj, "hooks"))) obj.hooks = {};
   const hooks = obj.hooks as Record<string, Json>;
-  if (!Array.isArray(hooks[leaf.event])) hooks[leaf.event] = [];
+  if (!Array.isArray(own(hooks, leaf.event))) hooks[leaf.event] = [];
   const groups = hooks[leaf.event] as Json[];
   for (const g of groups) {
-    if (!isPlainObject(g) || !Array.isArray(g.hooks)) continue;
-    if ((typeof g.matcher === "string" ? g.matcher : "") !== leaf.matcher) continue;
-    const i = g.hooks.findIndex((h) => isPlainObject(h) && h.command === leaf.command);
+    if (!isPlainObject(g)) continue;
+    const items = own(g, "hooks");
+    const matcher = own(g, "matcher");
+    if (!Array.isArray(items) || (typeof matcher === "string" ? matcher : "") !== leaf.matcher)
+      continue;
+    const i = items.findIndex((h) => isPlainObject(h) && own(h, "command") === leaf.command);
     if (i >= 0) {
-      g.hooks[i] = value;
+      items[i] = value;
       return;
     }
   }
   const group = groups.find(
     (g) =>
       isPlainObject(g) &&
-      Array.isArray(g.hooks) &&
-      (typeof g.matcher === "string" ? g.matcher : "") === leaf.matcher,
+      Array.isArray(own(g, "hooks")) &&
+      (typeof own(g, "matcher") === "string" ? own(g, "matcher") : "") === leaf.matcher,
   );
   if (group && isPlainObject(group) && Array.isArray(group.hooks)) group.hooks.push(value);
   else groups.push(leaf.matcher ? { matcher: leaf.matcher, hooks: [value] } : { hooks: [value] });
 }
 
 function deleteAt(obj: Record<string, Json>, leaf: Leaf): void {
+  checkSettingPath(leaf.kind === "key" ? leaf.path : ["hooks", leaf.event]);
   if (leaf.kind === "key") {
     let cur: Json | undefined = obj;
     for (const k of leaf.path.slice(0, -1)) {
       if (!isPlainObject(cur)) return;
-      cur = cur[k];
+      cur = own(cur, k);
     }
     if (isPlainObject(cur)) delete cur[leaf.path[leaf.path.length - 1] as string];
     return;
   }
-  const hooks = isPlainObject(obj.hooks) ? obj.hooks : undefined;
-  const groups = hooks?.[leaf.event];
+  const value = own(obj, "hooks");
+  const hooks = isPlainObject(value) ? value : undefined;
+  const groups = hooks ? own(hooks, leaf.event) : undefined;
   if (!hooks || !Array.isArray(groups)) return;
   for (const g of groups) {
-    if (!isPlainObject(g) || !Array.isArray(g.hooks)) continue;
-    if ((typeof g.matcher === "string" ? g.matcher : "") !== leaf.matcher) continue;
-    g.hooks = g.hooks.filter((h) => !(isPlainObject(h) && h.command === leaf.command));
+    if (!isPlainObject(g)) continue;
+    const items = own(g, "hooks");
+    const matcher = own(g, "matcher");
+    if (!Array.isArray(items) || (typeof matcher === "string" ? matcher : "") !== leaf.matcher)
+      continue;
+    g.hooks = items.filter((h) => !(isPlainObject(h) && own(h, "command") === leaf.command));
   }
   hooks[leaf.event] = groups.filter(
-    (g) => !(isPlainObject(g) && Array.isArray(g.hooks) && g.hooks.length === 0),
+    (g) =>
+      !(
+        isPlainObject(g) &&
+        Object.hasOwn(g, "hooks") &&
+        Array.isArray(g.hooks) &&
+        g.hooks.length === 0
+      ),
   );
   if ((hooks[leaf.event] as Json[]).length === 0) delete hooks[leaf.event];
 }
@@ -613,7 +656,28 @@ export function planSettings(
   replace: boolean,
 ): SettingPlan[] {
   const plans: SettingPlan[] = [];
-  const ids = [...new Set([...wanted.keys(), ...Object.keys(lastApplied)])].sort();
+  // A missing child of a scalar is a shape conflict, not an absent setting.
+  const ancestors = new Map<string, string[]>();
+  for (const id of wanted.keys()) {
+    const leaf = parseLeafId(id);
+    if (leaf.kind !== "key") continue;
+    for (let i = 1; i < leaf.path.length; i++) {
+      const keys = leaf.path.slice(0, i);
+      const value = getAt(current, { kind: "key", path: keys });
+      if (value === undefined) break;
+      if (!isPlainObject(value)) {
+        ancestors.set(leafId({ kind: "key", path: keys }), keys);
+        break;
+      }
+    }
+  }
+  const ids = [
+    ...new Set([
+      ...wanted.keys(),
+      ...Object.keys(lastApplied),
+      ...(replace ? ancestors.keys() : []),
+    ]),
+  ].sort();
   for (const id of ids) {
     const leaf = parseLeafId(id);
     const cur = getAt(current, leaf);
@@ -621,7 +685,15 @@ export function planSettings(
     const last = Object.hasOwn(lastApplied, id) ? lastApplied[id] : undefined;
     let action: SettingAction;
     let deletedHere = false;
-    if (want !== undefined) {
+    if (
+      !replace &&
+      leaf.kind === "key" &&
+      [...ancestors.values()].some((keys) => keys.every((key, i) => leaf.path[i] === key))
+    ) {
+      action = "conflict";
+    } else if (replace && ancestors.has(id)) {
+      action = "remove";
+    } else if (want !== undefined) {
       if (cur === undefined) {
         // Never applied here: add it. Applied before and now missing: someone
         // removed it on this machine, so that is a local edit to respect.
