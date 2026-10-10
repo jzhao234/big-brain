@@ -223,6 +223,26 @@ describe("frontmatter boundaries", () => {
     expect(note.bodyLine).toBe(3);
   });
 
+  it("only takes whole --- lines as delimiters", () => {
+    const suffix = parse("notes/S.md", "---\ntype: note\n---- [ ] phantom\n## Body\n");
+    // No closing line, so nothing is frontmatter and the dashes stay text.
+    expect(suffix.frontmatter).toEqual({});
+    expect(suffix.tasks).toEqual([]);
+    const json = parse("notes/J.md", '---json\n["a"]\n---\nbody');
+    expect(json.frontmatter).toEqual({});
+    expect(json.body).toBe('---json\n["a"]\n---\nbody');
+    const spaced = parse("notes/T.md", "--- \nk: v\n---\t\nbody");
+    expect(spaced.frontmatter).toEqual({ k: "v" });
+    expect(spaced.body).toBe("body");
+  });
+
+  it("reads a closing delimiter on the last line without a newline", () => {
+    const note = parse("notes/E.md", "---\nstatus: active\n---");
+    expect(note.frontmatter).toEqual({ status: "active" });
+    expect(note.body).toBe("");
+    expect(parse("notes/C.md", "---\r\nk: v\r\n---\r\nbody").frontmatter).toEqual({ k: "v" });
+  });
+
   it("serializes a body that itself opens with --- without eating it", () => {
     const body = "---\nbetween rules\n---\nafter";
     const withKeys = stringifyNote(body, { status: "active" });
