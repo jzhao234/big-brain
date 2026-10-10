@@ -96,6 +96,19 @@ describe("templates with their own frontmatter", () => {
     expect(note.raw.match(/^---$/gm)).toHaveLength(2);
   });
 
+  it("keeps the project's own title and rejects an impossible template due date", () => {
+    fs.writeFileSync(
+      path.join(dir, "templates", "project.md"),
+      "---\ntitle: Default Project\n---\n## Goal\n",
+    );
+    expect(createProject(vault, { title: "Launch Rocket" }).title).toBe("Launch Rocket");
+    fs.writeFileSync(path.join(dir, "templates", "project.md"), "---\ndue: 2026-02-30\n---\n");
+    expect(() => createProject(vault, { title: "Bad Due" })).toThrow(/templates\/project.md/);
+    expect(createProject(vault, { title: "Own Due", due: "2026-03-01" }).frontmatter.due).toBe(
+      "2026-03-01",
+    );
+  });
+
   it("uses a template with unparseable frontmatter whole, as before", () => {
     fs.writeFileSync(path.join(dir, "templates", "daily.md"), "---\nbad: [\n---\n## Log\n");
     const note = getDailyNote(vault, "2026-10-11");

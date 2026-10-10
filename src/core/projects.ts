@@ -82,7 +82,18 @@ export function createProject(vault: Vault, input: CreateProjectInput): Note {
   const { frontmatter, body } = tpl
     ? templateParts(renderTemplate(tpl, { goal, title: input.title, date: todayISO() }))
     : { frontmatter: {}, body: `## Goal\n\n${goal}\n\n## Tasks\n\n## Notes\n\n## Log\n` };
-  const { tags: templateTags, ...templateFields } = frontmatter;
+  // The project's own name and fields win over template defaults.
+  const { tags: templateTags, title: _title, ...templateFields } = frontmatter;
+  const templateDue = templateFields.due;
+  if (
+    input.due === undefined &&
+    templateDue !== undefined &&
+    (typeof templateDue !== "string" || !isCalendarDate(templateDue))
+  ) {
+    throw new Error(
+      `Invalid due date in templates/project.md (want YYYY-MM-DD): ${String(templateDue)}`,
+    );
+  }
   return vault.createNote({
     title: input.title,
     type: "project",

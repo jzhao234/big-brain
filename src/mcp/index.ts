@@ -1,8 +1,12 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { resolveVault } from "../core/config.js";
+import { settlePushes } from "../core/git.js";
 import { Vault } from "../core/vault.js";
 import { buildServer } from "./server.js";
+
+/** How long shutdown waits for a queued auto-push before exiting anyway. */
+const SHUTDOWN_PUSH_WAIT_MS = 10_000;
 
 function parseArgs(argv: string[]): { vault?: string } {
   const out: { vault?: string } = {};
@@ -26,6 +30,14 @@ async function main(): Promise<void> {
   // stdout is the MCP transport; all human output must go to stderr.
   console.error(`big-brain MCP server: vault at ${dir} (${vault.notes().length} notes)`);
   await server.connect(new StdioServerTransport());
+  // A push queued behind a running one lives only in this process: give it a
+  // bounded chance to finish when the client disconnects or stops the server.
+  const shutdown = () => {
+    void settlePushes(SHUTDOWN_PUSH_WAIT_MS).finally(() => process.exit(0));
+  };
+  process.stdin.on("end", shutdown);
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
 }
 
 main().catch((err) => {

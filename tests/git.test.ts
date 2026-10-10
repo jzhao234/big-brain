@@ -251,6 +251,50 @@ describe("background push", () => {
     expect(remoteHead.trim()).toBe("big-brain: create notes/Fast Save.md");
   });
 
+  it("leaves nothing keeping the process alive while a push runs", async () => {
+    enableAutoCommit(true);
+    git(["remote", "add", "origin", remoteDir]);
+    git(["push", "-q", "-u", "origin", "main"]);
+    fs.writeFileSync(path.join(dir, ".git", "hooks", "pre-push"), "#!/bin/sh\nsleep 1\n", {
+      mode: 0o755,
+    });
+    // Resources that keep the event loop (and so a CLI process) alive.
+    const alive = () =>
+      process.getActiveResourcesInfo().filter((r) => r === "Timeout" || r === "ProcessWrap");
+    const before = alive().length;
+    new Vault(dir).createNote({ title: "Exit Fast", body: "x" });
+    expect(alive().length).toBe(before);
+    await settlePushes();
+  });
+
+  it("drains a queued push within the shutdown bound", async () => {
+    enableAutoCommit(true);
+    git(["remote", "add", "origin", remoteDir]);
+    git(["push", "-q", "-u", "origin", "main"]);
+    fs.writeFileSync(path.join(dir, ".git", "hooks", "pre-push"), "#!/bin/sh\nsleep 0.3\n", {
+      mode: 0o755,
+    });
+    const vault = new Vault(dir);
+    vault.createNote({ title: "First", body: "x" });
+    vault.createNote({ title: "Second", body: "x" });
+    expect(await settlePushes(10_000)).toBe(true);
+    const remote = execFileSync("git", ["--git-dir", remoteDir, "rev-parse", "main"], {
+      encoding: "utf8",
+    }).trim();
+    expect(remote).toBe(git(["rev-parse", "HEAD"]).trim());
+  });
+
+  it("gives up waiting at the bound", async () => {
+    enableAutoCommit(true);
+    git(["remote", "add", "origin", remoteDir]);
+    git(["push", "-q", "-u", "origin", "main"]);
+    fs.writeFileSync(path.join(dir, ".git", "hooks", "pre-push"), "#!/bin/sh\nsleep 1\n", {
+      mode: 0o755,
+    });
+    new Vault(dir).createNote({ title: "Slow", body: "x" });
+    expect(await settlePushes(50)).toBe(false);
+  });
+
   it("coalesces commits made during a push so the last one is pushed", async () => {
     enableAutoCommit(true);
     git(["remote", "add", "origin", remoteDir]);
