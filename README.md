@@ -10,9 +10,9 @@ Your AI tools each keep their own memory of you, siloed and invisible. big-brain
 - **Claude Code skills** — `/brain`, `/capture`, `/weekly` — installed with one command.
 - **Projects as the unit of work** — each is one file with a goal, checkbox tasks, and a running log.
 - **Deterministic retrieval first**: full-text search (fuzzy, title-boosted), `[[wikilink]]` graph with backlinks, tags, frontmatter queries. No API keys, works offline.
-- **Optional local hybrid search**: flip `embeddings.enabled` and a small on-device model (via `@huggingface/transformers`) adds semantic matching, fused with full-text by Reciprocal Rank Fusion — paraphrases match, exact identifiers still win, and nothing leaves your machine. Powers `related_notes` similarity too. See [docs/vault-spec.md](docs/vault-spec.md#search--embeddings-hybrid-retrieval).
-- **Optional git auto-commit + push** — flip a config flag and every write, from any tool, commits only the note paths it touched and pushes automatically, so saves never sit uncommitted, unrelated work is not swept in, and your other machines stay in sync. Best-effort: a git failure never blocks a save, and pushes run in the background so a slow network never delays one.
-- **Edits that don't damage notes.** Writes are atomic and locked per note, keep each note's line endings, never land inside code blocks or frontmatter, refuse to rewrite frontmatter they can't parse, and never write outside the vault (even through a symlink).
+- **Optional local hybrid search**: flip `embeddings.enabled` and a small on-device model (via `@huggingface/transformers`) adds semantic matching, fused with full-text by Reciprocal Rank Fusion — paraphrases match, exact terms still count through the full-text half of the ranking, and nothing leaves your machine. Powers `related_notes` similarity too. See [docs/vault-spec.md](docs/vault-spec.md#search--embeddings-hybrid-retrieval).
+- **Optional git auto-commit + push** — flip a config flag and every note write, from any tool, commits only the note paths it touched and pushes automatically, so unrelated work is not swept in and your other machines stay in sync. Best-effort: a git failure never blocks a save (the note is saved, just not committed), and pushes run in the background so a slow network never delays one.
+- **Edits that don't damage notes.** Writes are atomic and locked per note, keep each note's line endings, don't land inside code blocks or frontmatter, refuse to rewrite frontmatter they can't parse, and refuse to write anywhere that resolves outside the vault (such as through a symlink). See [docs/vault-spec.md](docs/vault-spec.md#known-limits) for the edge cases these don't cover.
 
 Requires Node 20+.
 
@@ -85,9 +85,9 @@ big-brain mcp-http --vault ~/brain
 
 It binds to localhost by default and checks `Authorization: Bearer <token>` before parsing JSON. Bodies are capped at 1 MB (larger requests get HTTP 413 with a JSON-RPC error). Requests without `Origin` are allowed; requests with one require an exact match in `--allowed-origins` / `BIG_BRAIN_MCP_ALLOWED_ORIGINS`, which defaults to empty and refuses browser origins. Keep it behind an HTTPS reverse proxy or secure tunnel; never expose the plain HTTP listener directly. The static token is the first self-hosted transport milestone, not an OAuth implementation—browser connectors that require OAuth still need an OAuth-capable gateway. See [docs/mcp-setup.md](docs/mcp-setup.md#remote-streamable-http-preview).
 
-**Browser fallback (claude.ai / ChatGPT)** — the zero-infrastructure option is to connect the AI to your vault's **GitHub repo** and let it read/write the markdown directly (you lose the computed overview/search/task tools — it's raw file access). See [docs/browser-github-connector.md](docs/browser-github-connector.md) and paste [prompts/browser-github-instructions.md](prompts/browser-github-instructions.md).
+**Browser fallback (claude.ai / ChatGPT)** — the zero-infrastructure option is to connect the AI to your vault's **GitHub repo** so it can read the markdown directly, and write it where the connector allows (some GitHub connectors are read-only; you also lose the computed overview/search/task tools, since it's raw file access). See [docs/browser-github-connector.md](docs/browser-github-connector.md) and paste [prompts/browser-github-instructions.md](prompts/browser-github-instructions.md).
 
-Then teach the assistant how to use the vault: Claude Code reads the vault's `CLAUDE.md` automatically; for other tools, paste [`prompts/agent-instructions.md`](prompts/agent-instructions.md) into their custom instructions.
+Then teach the assistant how to use the vault: Claude Code reads the vault's `CLAUDE.md` automatically when you work inside the vault folder; elsewhere, and for other tools, paste [`prompts/agent-instructions.md`](prompts/agent-instructions.md) into their custom instructions.
 
 ## Using it: load and save
 
@@ -156,7 +156,7 @@ How it stays safe:
 - **Nothing unmanaged is replaced unless you say so.** A file in the way is reported; `--replace` moves it to a timestamped backup under `~/.local/state/big-brain/backups` (outside every agent folder, so a backed-up skill is never picked up) with a restore manifest, then links the vault's.
 - **Settings merge three ways.** big-brain remembers what it applied on each machine: a value you edited locally is reported, not overwritten (`--replace` takes the vault's); a value you never touched follows the vault; a key dropped from the vault is removed only if it wasn't edited. Claude hooks are matched by event, matcher, and command, so changing a timeout updates the hook instead of registering it twice. TOML is edited line by line (comments, trust entries and hook hashes stay put), and any edit that would change more than the managed keys is refused.
 - **Plan first, then write, and roll back on failure.** Every link and settings change is validated before the first write; a refusal leaves the machine untouched, and if a step still fails midway the steps already done are undone (if even that fails, nothing is deleted and the error says where the originals are). Nothing is written through a symlinked folder, and a settings file kept as a symlink (e.g. in a dotfiles repo) stays a symlink. `--prune` removes links whose vault file was deleted.
-- **`save` never captures secrets or machine state.** Settings files, `.credentials.json`, `auth.json`, `.env` files, history, sessions, caches and databases are refused — save individual settings with `--setting`.
+- **`save` refuses known secret and state files.** Whole settings files, `.credentials.json`, `auth.json`, `.env` files, history, sessions, caches and databases are refused; save individual settings with `--setting`. It doesn't inspect contents, so review the files and `--setting` values you save (an `env.API_KEY` setting would be copied as is).
 - **Codex hooks stay local.** Codex asks you to trust each hook on each machine, so hook registrations are not managed for Codex. Claude Code users: review new hooks with `/hooks`. Status warns when Codex's `AGENTS.override.md` overrides `AGENTS.md`.
 
 `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are honored. The folder name is `folders.agents` in `brain.config.json` (default `agents`), and it is never indexed as notes.
@@ -165,7 +165,7 @@ How it stays safe:
 
 The vault is a git repo, so this is just git: **clone it on each machine, and each machine runs its own `big-brain-mcp` against its own clone.** Git keeps them in sync.
 
-- **Write side — automatic.** Set `git.autoCommit` (and `git.autoPush`) in `brain.config.json` and every write — from any tool, any machine — is committed and pushed. See [docs/vault-spec.md](docs/vault-spec.md#auto-commit).
+- **Write side — automatic.** Set `git.autoCommit` (and `git.autoPush`) in `brain.config.json` and every note write — from any tool, any machine — is committed and pushed (best-effort). See [docs/vault-spec.md](docs/vault-spec.md#auto-commit).
 - **Read side — pull before you start.** Add a `SessionStart` hook so a session always opens on the latest:
 
   ```json
@@ -248,7 +248,7 @@ big-brain agents status|install|save   agent setup from the vault (see Agent pro
 big-brain install-skills        add Claude Code skills  big-brain mcp   run the MCP server
 ```
 
-Every list command takes `--json` for scripting. `task done` and `task update` take a task id or its text: a task's whole text wins over longer tasks that contain it, and an ambiguous fragment lists the candidates. Put `--` before `append` text that starts with `-` (a list item), or it is read as an option. `frontmatter` reads each value as YAML, like `key: value` in the file: `'tags=[work, llm]'` is a list, `due=2026-11-01` stays a date string, and `key=null` (or `key=`) removes the key. Quote any assignment that contains spaces, or the shell splits it into separate arguments.
+`search`, `related`, `tasks`, `projects`, and `doctor` take `--json` for scripting. `task done` and `task update` take a task id or its text: a task's whole text wins over longer tasks that contain it, and an ambiguous fragment lists the candidates. Put `--` before `append` text that starts with `-` (a list item), or it is read as an option. `frontmatter` reads each value as YAML, like `key: value` in the file: `'tags=[work, llm]'` is a list, `due=2026-11-01` stays a date string, and `key=null` (or `key=`) removes the key. Quote any assignment that contains spaces, or the shell splits it into separate arguments.
 
 ## Design principles
 
