@@ -38,7 +38,7 @@ A note's `type` comes from frontmatter when present, otherwise from its top-leve
 }
 ```
 
-All keys optional. `folders` only needs the entries you rename. `ignore` takes extra glob patterns to exclude from scanning. Dot-files and dot-folders (`.git`, `.obsidian`, `.trash`, …), `node_modules`, the templates folder, and the agents folder are always excluded. The tools refuse to create or archive a note anywhere the scan would skip, so a write can never leave behind a note the vault can't see.
+All keys optional. `folders` only needs the entries you rename; a folder may be nested (`work/projects`), and `daily/` or `./daily` mean the same as `daily`. A note without a frontmatter `type` takes the type of the deepest configured folder that contains it. Each known key's type is checked when the vault opens: `"autoPush": "false"` (a string) is refused with an error naming the file and field rather than read as on. `ignore` takes extra glob patterns to exclude from scanning. Dot-files and dot-folders (`.git`, `.obsidian`, `.trash`, …), `node_modules`, the templates folder, and the agents folder are always excluded. The tools refuse to create or archive a note anywhere the scan would skip, so a write can never leave behind a note the vault can't see.
 
 ### Search & embeddings (hybrid retrieval)
 

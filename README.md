@@ -227,7 +227,7 @@ Notes are markdown + YAML frontmatter (`type`, `tags`, `status`, `due`…). Task
 | `list_tasks` / `add_task` / `complete_task` / `update_task` | Checkbox tasks across the vault; `update_task` reschedules, reprioritizes, rewords, reopens, or cancels one in place |
 | `note_links` | Outgoing links + backlinks for a note |
 | `related_notes` | Related notes with reasons: links, co-citations, rare shared tags, title mentions, semantic similarity |
-| `list_tags` / `vault_health` | Tag census; broken links, stale projects, bloated/duplicate notes, overdue tasks |
+| `list_tags` / `vault_health` | Tag census; broken links, frontmatter that doesn't parse, stale projects, bloated/duplicate notes, overdue tasks |
 
 Plus three MCP prompts: `orient`, `weekly-review`, `process-inbox`.
 
