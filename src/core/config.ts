@@ -35,8 +35,9 @@ export function loadConfig(vaultDir: string): BrainConfig {
   }
   const raw = validateConfig(parsed, file);
   const folders = { ...DEFAULT_CONFIG.folders, ...(raw.folders ?? {}) };
-  for (const key of Object.keys(folders) as Array<keyof typeof folders>) {
-    folders[key] = normalizeFolder(folders[key]);
+  // Known folders only: unknown keys are kept as written for extensions.
+  for (const key of Object.keys(DEFAULT_CONFIG.folders) as Array<keyof typeof folders>) {
+    folders[key] = normalizeFolder(folders[key], `${file}: folders.${key}`);
   }
   return {
     ...DEFAULT_CONFIG,
@@ -52,11 +53,18 @@ export function loadConfig(vaultDir: string): BrainConfig {
  * One spelling per folder, so `daily/`, `./daily`, and `daily` name the same
  * place in lookups, archive checks, and type inference as in writes.
  */
-function normalizeFolder(folder: string): string {
-  return folder
+function normalizeFolder(folder: string, field: string): string {
+  // Checked before normalizing, which would otherwise quietly turn
+  // `/archive` into `archive`.
+  if (/^([\\/]|[A-Za-z]:)/.test(folder.trim())) {
+    throw new Error(`${field} must be relative to the vault: ${folder}`);
+  }
+  const segments = folder
+    .trim()
     .split(/[\\/]+/)
-    .filter((s) => s !== "" && s !== ".")
-    .join("/");
+    .filter((s) => s !== "" && s !== ".");
+  if (segments.includes("..")) throw new Error(`${field} must stay inside the vault: ${folder}`);
+  return segments.join("/");
 }
 
 const typeName = (v: unknown): string => typeof v;

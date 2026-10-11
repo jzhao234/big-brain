@@ -724,3 +724,25 @@ describe("note locks", () => {
     expect(fs.existsSync(lockFor("notes/B.md"))).toBe(true);
   });
 });
+
+describe("appending after an unclosed code fence", () => {
+  it("closes the fence before appending prose or a task", () => {
+    fs.writeFileSync(path.join(dir, "notes", "Open.md"), "# Open\n\n```sh\necho hi\n");
+    vault.refresh();
+    vault.appendToNote("Open", "new prose");
+    expect(fs.readFileSync(path.join(dir, "notes", "Open.md"), "utf8")).toBe(
+      "# Open\n\n```sh\necho hi\n```\n\nnew prose\n",
+    );
+    expect(addTask(vault, { text: "real task", note: "Open" }).text).toBe("real task");
+  });
+
+  it("closes a fence left open inside the target section", () => {
+    fs.writeFileSync(path.join(dir, "notes", "Sec.md"), "# Sec\n\n## Log\n\n~~~~\ncode\n");
+    vault.refresh();
+    const task = addTask(vault, { text: "after code", note: "Sec", heading: "Log" });
+    expect(task.text).toBe("after code");
+    expect(fs.readFileSync(path.join(dir, "notes", "Sec.md"), "utf8")).toBe(
+      "# Sec\n\n## Log\n\n~~~~\ncode\n~~~~\n- [ ] after code\n",
+    );
+  });
+});

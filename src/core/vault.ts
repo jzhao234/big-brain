@@ -7,7 +7,7 @@ import { autoCommit } from "./git.js";
 import { parseNote } from "./parse.js";
 import { SearchIndex } from "./search.js";
 import type { BrainConfig, Note, NoteLink, SearchOptions, SearchResult } from "./types.js";
-import { nameKey, safeFilename, toLF, toPosix, todayISO } from "./util.js";
+import { nameKey, openFence, safeFilename, toLF, toPosix, todayISO } from "./util.js";
 import { assertInside, atomicWriteFile, errorCode, withNoteLock } from "./write.js";
 
 export interface CreateNoteInput {
@@ -316,11 +316,16 @@ export class Vault {
         while (insertAt > startLine + 1 && (lines[insertAt - 1] ?? "").trim() === "") {
           insertAt--;
         }
-        lines.splice(insertAt, 0, block);
+        // A fence left open runs to the end of the note, so text inserted
+        // there would become code: close it first.
+        const fence = openFence(lines.slice(note.bodyLine, insertAt));
+        lines.splice(insertAt, 0, ...(fence ? [fence, block] : [block]));
         raw = lines.join("\n");
-        line = insertAt;
+        line = fence ? insertAt + 1 : insertAt;
       } else {
-        const prefix = `${raw.replace(/\s+$/, "")}\n\n${heading ? `## ${heading}\n\n` : ""}`;
+        const trimmed = raw.replace(/\s+$/, "");
+        const fence = openFence(trimmed.split("\n").slice(note.bodyLine));
+        const prefix = `${trimmed}${fence ? `\n${fence}` : ""}\n\n${heading ? `## ${heading}\n\n` : ""}`;
         raw = `${prefix}${block}\n`;
         line = prefix.split("\n").length - 1;
       }
