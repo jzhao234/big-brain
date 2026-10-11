@@ -90,8 +90,17 @@ const FENCE_CLOSE_RE = /^\s{0,3}(`{3,}|~{3,})\s*$/;
  * opener, closes a fence; an unclosed fence runs to the end of the text.
  */
 export function fencedLines(lines: string[]): boolean[] {
+  return scanFences(lines).fenced;
+}
+
+/** The fence marker (e.g. "```" or "~~~~") still open after the last line, if any. */
+export function openFence(lines: string[]): string | undefined {
+  return scanFences(lines).open;
+}
+
+function scanFences(lines: string[]): { fenced: boolean[]; open: string | undefined } {
   let fence: string | undefined;
-  return lines.map((line) => {
+  const fenced = lines.map((line) => {
     if (fence === undefined) {
       const open = FENCE_OPEN_RE.exec(line);
       if (open) fence = open[1]!;
@@ -101,6 +110,7 @@ export function fencedLines(lines: string[]): boolean[] {
     if (close && close[0] === fence[0] && close.length >= fence.length) fence = undefined;
     return true;
   });
+  return { fenced, open: fence };
 }
 
 /**

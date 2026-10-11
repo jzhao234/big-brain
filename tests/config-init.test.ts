@@ -75,6 +75,23 @@ describe("brain.config.json validation", () => {
     expect(() => loadConfig(dir)).toThrow(/brain\.config\.json: /);
   });
 
+  it("keeps a root daily folder working and unknown folder keys as written", () => {
+    writeConfig({ folders: { daily: ".", custom: { hint: "kept" } } });
+    const vault = new Vault(dir);
+    expect(getDailyNote(vault, "2026-10-11").path).toBe("2026-10-11.md");
+    expect(getDailyNote(vault, "2026-10-11").path).toBe("2026-10-11.md");
+    expect((vault.config.folders as unknown as Record<string, unknown>).custom).toEqual({
+      hint: "kept",
+    });
+  });
+
+  it("refuses absolute or escaping folders instead of reinterpreting them", () => {
+    writeConfig({ folders: { archive: "/archive" } });
+    expect(() => loadConfig(dir)).toThrow(/folders\.archive must be relative to the vault/);
+    writeConfig({ folders: { daily: "work/../../daily" } });
+    expect(() => loadConfig(dir)).toThrow(/folders\.daily must stay inside the vault/);
+  });
+
   it("keeps valid configs and unknown keys", () => {
     writeConfig({ name: "Mine", git: { autoCommit: true }, custom: 1 });
     const config = loadConfig(dir) as unknown as Record<string, unknown>;

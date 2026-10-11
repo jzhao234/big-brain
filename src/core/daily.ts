@@ -43,7 +43,8 @@ export function getDailyNote(vault: Vault, date?: string): Note {
   if (!isCalendarDate(day)) {
     throw new Error(`Invalid date (want YYYY-MM-DD): ${date}`);
   }
-  const rel = `${vault.config.folders.daily}/${day}.md`;
+  const folder = vault.config.folders.daily;
+  const rel = folder === "" ? `${day}.md` : `${folder}/${day}.md`;
   const existing = vault.get(rel);
   if (existing) return existing;
   const tpl = vault.template("daily");
