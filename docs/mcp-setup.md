@@ -97,6 +97,12 @@ ChatGPT's connector system and the OpenAI Agents SDK both speak MCP. Local stdio
 - Any MCP-over-stdio client: point it at `big-brain-mcp --vault <dir>`.
 - No MCP support at all? The CLI is scriptable (`big-brain search --json`, `big-brain tasks --json`) and the vault is just markdown — even a plain shell tool loop can use it.
 
+## Errors and shutdown
+
+A tool that can't do what was asked returns an MCP tool error (`isError: true`) with a one-line reason, including `read_note` and `note_links` for a note that doesn't exist, so clients don't have to parse prose to spot a failure.
+
+With [auto-push](vault-spec.md#auto-commit) on, both servers push in the background. On Ctrl-C or SIGTERM (and, for stdio, when the client closes the connection) they wait up to 10 seconds for a queued push before exiting; anything still unpushed goes out with the next write.
+
 ## Multiple vaults
 
 Register the server twice with different names and `--vault` paths (e.g. `brain-personal`, `brain-work`).

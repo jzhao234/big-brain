@@ -26,7 +26,7 @@ Your vault is a **private GitHub repo** (e.g. `jzhao234/brain`). If it isn't a r
 
 ## Keeping it in sync with your terminal
 
-The repo is the single source of truth. Your VPS has [git auto-commit](vault-spec.md#auto-commit) on, so terminal/MCP edits are pushed automatically; browser edits are commits by nature. Just `git pull` on the VPS before a terminal session if you've been editing from the browser, so the two don't diverge.
+The repo is the single source of truth. With [git auto-commit and auto-push](vault-spec.md#auto-commit) on, terminal/MCP edits are pushed automatically; browser edits are commits by nature. Just `git pull` on each machine before a terminal session if you've been editing from the browser (or use the `SessionStart` hook from the README), so the two don't diverge.
 
 ## Honest tradeoff
 

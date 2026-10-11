@@ -11,7 +11,8 @@ Your AI tools each keep their own memory of you, siloed and invisible. big-brain
 - **Projects as the unit of work** — each is one file with a goal, checkbox tasks, and a running log.
 - **Deterministic retrieval first**: full-text search (fuzzy, title-boosted), `[[wikilink]]` graph with backlinks, tags, frontmatter queries. No API keys, works offline.
 - **Optional local hybrid search**: flip `embeddings.enabled` and a small on-device model (via `@huggingface/transformers`) adds semantic matching, fused with full-text by Reciprocal Rank Fusion — paraphrases match, exact identifiers still win, and nothing leaves your machine. Powers `related_notes` similarity too. See [docs/vault-spec.md](docs/vault-spec.md#search--embeddings-hybrid-retrieval).
-- **Optional git auto-commit + push** — flip a config flag and every write, from any tool, commits only the note paths it touched and pushes automatically, so saves never sit uncommitted, unrelated work is not swept in, and your other machines stay in sync. Best-effort: a git failure never blocks a save.
+- **Optional git auto-commit + push** — flip a config flag and every write, from any tool, commits only the note paths it touched and pushes automatically, so saves never sit uncommitted, unrelated work is not swept in, and your other machines stay in sync. Best-effort: a git failure never blocks a save, and pushes run in the background so a slow network never delays one.
+- **Edits that don't damage notes.** Writes are atomic and locked per note, keep each note's line endings, never land inside code blocks or frontmatter, refuse to rewrite frontmatter they can't parse, and never write outside the vault (even through a symlink).
 
 Requires Node 20+.
 
@@ -233,7 +234,7 @@ Plus three MCP prompts: `orient`, `weekly-review`, `process-inbox`.
 ## CLI
 
 ```
-big-brain init [dir]            scaffold a vault        big-brain tasks [--project X]
+big-brain init [dir]            scaffold a vault        big-brain tasks [-p X] [-t tag] [--due-by D]
 big-brain status                overview                big-brain task add|done ...
 big-brain search <query>        search (hybrid if on)   big-brain projects [--status active]
 big-brain show <note>           print a note            big-brain project new|status ...
@@ -247,7 +248,7 @@ big-brain agents status|install|save   agent setup from the vault (see Agent pro
 big-brain install-skills        add Claude Code skills  big-brain mcp   run the MCP server
 ```
 
-Every list command takes `--json` for scripting. Put `--` before `append` text that starts with `-` (a list item), or it is read as an option. `frontmatter` reads each value as YAML, like `key: value` in the file: `'tags=[work, llm]'` is a list, `due=2026-11-01` stays a date string, and `key=null` (or `key=`) removes the key. Quote any assignment that contains spaces, or the shell splits it into separate arguments.
+Every list command takes `--json` for scripting. `task done` and `task update` take a task id or its text: a task's whole text wins over longer tasks that contain it, and an ambiguous fragment lists the candidates. Put `--` before `append` text that starts with `-` (a list item), or it is read as an option. `frontmatter` reads each value as YAML, like `key: value` in the file: `'tags=[work, llm]'` is a list, `due=2026-11-01` stays a date string, and `key=null` (or `key=`) removes the key. Quote any assignment that contains spaces, or the shell splits it into separate arguments.
 
 ## Design principles
 
