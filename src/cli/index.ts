@@ -819,7 +819,9 @@ program
     );
     const args = opts.vault ? ["--vault", opts.vault] : [];
     const child = spawn(process.execPath, [serverPath, ...args], { stdio: "inherit" });
-    child.on("exit", (code) => process.exit(code ?? 0));
+    child.on("exit", (code, signal) =>
+      process.exit(code ?? (signal ? 128 + os.constants.signals[signal] : 1)),
+    );
   });
 
 program
@@ -851,7 +853,9 @@ program
       if (opts.allowedHosts) args.push("--allowed-hosts", opts.allowedHosts);
       if (opts.allowedOrigins) args.push("--allowed-origins", opts.allowedOrigins);
       const child = spawn(process.execPath, [serverPath, ...args], { stdio: "inherit" });
-      child.on("exit", (code) => process.exit(code ?? 0));
+      child.on("exit", (code, signal) =>
+        process.exit(code ?? (signal ? 128 + os.constants.signals[signal] : 1)),
+      );
     },
   );
 

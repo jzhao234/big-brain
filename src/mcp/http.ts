@@ -56,7 +56,11 @@ try {
     allowedHosts,
     allowedOrigins,
   });
-  const listener = app.listen(port, options.host, () => {
+  const listener = app.listen(port, options.host, (error?: Error) => {
+    if (error) {
+      console.error(error.message);
+      return process.exit(1);
+    }
     console.error(`big-brain remote MCP: http://${options.host}:${port}/mcp`);
     console.error(`vault at ${dir} (${vault.notes().length} notes)`);
   });

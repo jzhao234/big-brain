@@ -354,12 +354,16 @@ export class SemanticIndex {
   }
 
   /** Rank other notes by centroid similarity to the given note. */
-  similarTo(notePath: string, limit = 10): Array<{ path: string; score: number }> {
+  similarTo(
+    notePath: string,
+    limit = 10,
+    eligible: (notePath: string) => boolean = () => true,
+  ): Array<{ path: string; score: number }> {
     const self = this.data.notes[notePath];
     if (!self) return [];
     const scored: Array<{ path: string; score: number }> = [];
     for (const [p, nv] of Object.entries(this.data.notes)) {
-      if (p === notePath) continue;
+      if (p === notePath || !eligible(p)) continue;
       scored.push({ path: p, score: dot(self.centroid, nv.centroid) });
     }
     return scored.sort((a, b) => b.score - a.score).slice(0, limit);

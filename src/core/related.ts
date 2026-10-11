@@ -128,9 +128,11 @@ export async function relatedNotes(
       const provider = opts.provider ?? (await createEmbeddingProvider(vault.config.embeddings));
       const index = new SemanticIndex(vault.dir, provider.id);
       await index.ensure(vault.notes(true), provider);
-      for (const { path: p, score } of index.similarTo(source.path, limit * 2)) {
+      const eligible = new Set(notes.map((n) => n.path));
+      for (const { path: p, score } of index.similarTo(source.path, limit * 2, (p) =>
+        eligible.has(p),
+      )) {
         if (score < 0.45) continue; // below this, "similarity" is noise
-        if (!notes.some((n) => n.path === p)) continue; // archived etc.
         bump(p, WEIGHTS.semantic * score, `semantically similar (${score.toFixed(2)})`);
       }
     } catch {

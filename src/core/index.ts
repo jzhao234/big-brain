@@ -12,7 +12,7 @@ export {
   type EmbeddingProvider,
   type HybridDeps,
 } from "./embeddings.js";
-export { autoCommit } from "./git.js";
+export { autoCommit, settlePushes } from "./git.js";
 export { relatedNotes, type RelatedNote, type RelatedOptions } from "./related.js";
 export { renderOverview, vaultOverview, type VaultOverview } from "./overview.js";
 export {
