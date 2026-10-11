@@ -62,7 +62,7 @@ Defaults:
 - Health check: `http://127.0.0.1:3333/health`
 - Authentication: `Authorization: Bearer <BIG_BRAIN_MCP_TOKEN>`; the token must be at least 32 characters or the server won't start. `/health` needs no token.
 - The bearer token is checked before parsing the JSON body. Authenticated request bodies are limited to 1 MB; larger ones receive HTTP 413 with a JSON-RPC error (an unauthenticated request is refused before its size matters).
-- Stateless: each `POST /mcp` gets a JSON response. There are no sessions or server-sent event streams; `GET` and `DELETE` on `/mcp` return 405.
+- Stateless: each JSON-RPC request `POST`ed to `/mcp` gets a JSON response (a notification gets an empty 202). There are no sessions or server-sent event streams; `GET` and `DELETE` on `/mcp` return 405.
 - A port that's taken (or can't be bound) is reported and the process exits with status 1.
 - Requests without an `Origin` header (native MCP clients and curl) are allowed. Requests with an `Origin` must match an allowed origin exactly; the default list is empty, so browser-originated requests are refused until you configure it. This protects against DNS rebinding and cross-site requests as required by the MCP spec.
 
