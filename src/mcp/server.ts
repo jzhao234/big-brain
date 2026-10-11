@@ -602,7 +602,7 @@ export function buildServer(vault: Vault): McpServer {
           role: "user" as const,
           content: {
             type: "text" as const,
-            text: "List my inbox notes (list_notes folder=inbox). For each one, propose where it belongs: merge into an existing note/project (append_note), become a new note with [[links]], turn into tasks, or archive. Confirm with me per item, then do it and archive the processed capture.",
+            text: `List my inbox notes (list_notes folder=${JSON.stringify(vault.config.folders.inbox)}). For each one, propose where it belongs: merge into an existing note/project (append_note), become a new note with [[links]], turn into tasks, or archive. Confirm with me per item, then do it and archive the processed capture.`,
           },
         },
       ],

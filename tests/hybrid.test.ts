@@ -407,6 +407,32 @@ describe("index CLI", () => {
 });
 
 describe("relatedNotes", () => {
+  it("filters archived neighbors before capping semantic candidates", async () => {
+    enableEmbeddings();
+    const source = vault.createNote({ title: "S", body: "source" });
+    const target = vault.createNote({ title: "T", body: "eligible neighbor" });
+    for (let i = 0; i < 3; i++) {
+      fs.writeFileSync(path.join(dir, "archive", `Excluded ${i}.md`), "excluded neighbor");
+    }
+    vault.refresh();
+    const provider: EmbeddingProvider = {
+      id: "related-filter-test",
+      async embed(texts) {
+        return texts.map((text) =>
+          text.includes("eligible neighbor")
+            ? [0.8, 0.6]
+            : text.includes("source") || text.includes("excluded neighbor")
+              ? [1, 0]
+              : [0, 1],
+        );
+      },
+    };
+
+    const results = await relatedNotes(vault, source.path, { limit: 1, provider });
+    expect(results.map((r) => r.path)).toEqual([target.path]);
+    expect(results[0]!.reasons).toContain("semantically similar (0.80)");
+  });
+
   it("scores links, shared tags, co-citation, and mentions with reasons", async () => {
     vault.createNote({ title: "Hub", tags: ["adtech"], body: "central" });
     vault.createNote({ title: "Alpha", tags: ["adtech", "rare-tag"], body: "See [[Hub]]." });

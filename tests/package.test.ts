@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { describe, expect, it } from "vitest";
+import * as core from "../src/core/index.js";
 
 interface PackageManifest {
   dependencies?: Record<string, string>;
@@ -13,6 +14,14 @@ const manifest = JSON.parse(
 ) as PackageManifest;
 
 describe("package manifest", () => {
+  it("exports the push drain alongside autoCommit", async () => {
+    expect(core).toHaveProperty("settlePushes", expect.any(Function));
+    const { settlePushes } = core as typeof core & {
+      settlePushes: (maxMs?: number) => Promise<boolean>;
+    };
+    await expect(settlePushes(100)).resolves.toBe(true);
+  });
+
   it("keeps local embeddings out of the default install", () => {
     expect(manifest.dependencies?.["@huggingface/transformers"]).toBeUndefined();
     expect(manifest.optionalDependencies?.["@huggingface/transformers"]).toBeUndefined();
