@@ -45,6 +45,25 @@ describe("MCP lookups", () => {
     expect(found.isError).toBeFalsy();
     await client.close();
   });
+
+  it("shows unparsed frontmatter and the error instead of hiding them", async () => {
+    fs.writeFileSync(
+      path.join(dir, "notes", "Broken.md"),
+      "---\nprivate: [unclosed\n---\n# Home\n",
+    );
+    vault.refresh();
+    const client = await connect();
+    const result = await client.callTool({
+      name: "read_note",
+      arguments: { ref: "notes/Broken.md" },
+    });
+    const text = JSON.stringify(result.content);
+    expect(text).toContain("frontmatter error");
+    expect(text).toContain("private: [unclosed");
+    const health = await client.callTool({ name: "vault_health", arguments: {} });
+    expect(JSON.stringify(health.content)).toContain("bad-frontmatter");
+    await client.close();
+  });
 });
 
 describe("CLI tasks", () => {

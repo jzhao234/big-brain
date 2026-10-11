@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { CONFIG_FILENAME } from "./config.js";
 import { renderTemplate } from "./daily.js";
 import { todayISO } from "./util.js";
+import { assertInside } from "./write.js";
 
 /** Locate the packaged starter vault (big-brain/template). */
 export function templateDir(): string {
@@ -35,6 +36,11 @@ export function initVault(target: string, opts: InitOptions = {}): InitResult {
   fs.mkdirSync(dest, { recursive: true });
   const name = opts.name ?? path.basename(dest);
   const vars = { name, date: todayISO() };
+  // Values substituted into a JSON string literal must be JSON-escaped, or a
+  // name like `My "Brain"` produces a config the vault can't load.
+  const jsonVars = Object.fromEntries(
+    Object.entries(vars).map(([k, v]) => [k, JSON.stringify(v).slice(1, -1)]),
+  );
   const written: string[] = [];
   const skipped: string[] = [];
 
@@ -43,6 +49,8 @@ export function initVault(target: string, opts: InitOptions = {}): InitResult {
     for (const entry of fs.readdirSync(abs, { withFileTypes: true })) {
       const childRel = rel === "" ? entry.name : `${rel}/${entry.name}`;
       if (entry.isDirectory()) {
+        // A pre-existing symlinked folder must not carry the scaffold elsewhere.
+        assertInside(dest, path.join(dest, childRel));
         fs.mkdirSync(path.join(dest, childRel), { recursive: true });
         walk(childRel);
       } else {
@@ -53,8 +61,10 @@ export function initVault(target: string, opts: InitOptions = {}): InitResult {
           skipped.push(outRel);
           continue;
         }
+        assertInside(dest, outAbs);
         const content = fs.readFileSync(path.join(src, childRel), "utf8");
-        fs.writeFileSync(outAbs, renderTemplate(content, vars), "utf8");
+        const rendered = renderTemplate(content, outRel.endsWith(".json") ? jsonVars : vars);
+        fs.writeFileSync(outAbs, rendered, "utf8");
         written.push(outRel);
       }
     }

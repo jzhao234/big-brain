@@ -29,6 +29,19 @@ export function runDoctor(vault: Vault): DoctorFinding[] {
     }
   }
 
+  // Frontmatter that didn't parse: its metadata reads as empty, and rewrites
+  // that would re-serialize it refuse until the YAML is fixed.
+  for (const note of active) {
+    if (note.frontmatterError !== undefined) {
+      findings.push({
+        severity: "warning",
+        rule: "bad-frontmatter",
+        message: `Frontmatter doesn't parse (${note.frontmatterError}); its metadata is ignored until the YAML is fixed`,
+        path: note.path,
+      });
+    }
+  }
+
   // Duplicate titles/aliases (ambiguous wikilink targets).
   const byName = new Map<string, string[]>();
   for (const note of active) {

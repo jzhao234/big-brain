@@ -8,7 +8,7 @@ import { createProject, listProjects, setProjectStatus } from "../core/projects.
 import { relatedNotes } from "../core/related.js";
 import { addTask, completeTask, listTasks, updateTask } from "../core/tasks.js";
 import type { Note } from "../core/types.js";
-import { nowStamp, todayISO } from "../core/util.js";
+import { nowStamp, toLF, todayISO } from "../core/util.js";
 import type { Vault } from "../core/vault.js";
 
 function text(s: string) {
@@ -28,11 +28,17 @@ function renderNote(note: Note): string {
   const fm = Object.entries(note.frontmatter)
     .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
     .join(", ");
+  // Unparsed frontmatter is left out of the body; show it so it can be repaired.
+  const broken =
+    note.frontmatterError === undefined
+      ? undefined
+      : `frontmatter error: ${note.frontmatterError}. Raw block (fix the YAML before update_frontmatter or replace_note_body):\n${toLF(note.raw).split("\n").slice(0, note.bodyLine).join("\n")}`;
   const head = [
     `path: ${note.path}`,
     `title: ${note.title}`,
     `type: ${note.type}`,
     fm ? `frontmatter: { ${fm} }` : undefined,
+    broken,
     note.tags.length > 0 ? `tags: ${note.tags.join(", ")}` : undefined,
   ]
     .filter(Boolean)

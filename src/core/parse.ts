@@ -118,15 +118,23 @@ export function extractTasks(
   return tasks;
 }
 
-/** Infer a note's type from frontmatter, falling back to its top-level folder. */
+/**
+ * Infer a note's type from frontmatter, falling back to the deepest configured
+ * folder containing it (folders may be nested, e.g. `work/projects`).
+ */
 export function inferType(
   fm: Record<string, unknown>,
   relPath: string,
   folderTypes: Record<string, string>,
 ): string {
   if (typeof fm.type === "string" && fm.type.trim() !== "") return fm.type.trim();
-  const top = relPath.split("/")[0] ?? "";
-  return folderTypes[top] ?? "note";
+  let best: string | undefined;
+  for (const folder of Object.keys(folderTypes)) {
+    if (folder !== "" && relPath.startsWith(`${folder}/`) && folder.length > (best?.length ?? -1)) {
+      best = folder;
+    }
+  }
+  return best === undefined ? "note" : (folderTypes[best] ?? "note");
 }
 
 export interface ParseInput {
