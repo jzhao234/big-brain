@@ -50,4 +50,15 @@ describe("runDoctor", () => {
       ),
     ).toBe(false);
   });
+
+  it("reports frontmatter that doesn't parse", () => {
+    fs.writeFileSync(
+      path.join(dir, "notes", "Broken.md"),
+      "---\nprivate: [unclosed\n---\n# Home\n",
+    );
+    vault.refresh();
+    const found = runDoctor(vault).filter((f) => f.rule === "bad-frontmatter");
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({ path: "notes/Broken.md", severity: "warning" });
+  });
 });

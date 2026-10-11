@@ -8,7 +8,7 @@ import { parseNote } from "./parse.js";
 import { SearchIndex } from "./search.js";
 import type { BrainConfig, Note, NoteLink, SearchOptions, SearchResult } from "./types.js";
 import { nameKey, safeFilename, toLF, toPosix, todayISO } from "./util.js";
-import { atomicWriteFile, errorCode, withNoteLock } from "./write.js";
+import { assertInside, atomicWriteFile, errorCode, withNoteLock } from "./write.js";
 
 export interface CreateNoteInput {
   title: string;
@@ -454,16 +454,7 @@ export class Vault {
    * Reads still follow such links; only writes are confined.
    */
   private assertInsideVault(abs: string): void {
-    const root = fs.realpathSync(this.dir);
-    // The target may not exist yet: resolve its deepest existing ancestor.
-    let probe = abs;
-    while (!fs.existsSync(probe) && path.dirname(probe) !== probe) probe = path.dirname(probe);
-    const real = fs.realpathSync(probe);
-    if (real !== root && !real.startsWith(`${root}${path.sep}`)) {
-      throw new Error(
-        `Refusing to write ${toPosix(path.relative(this.dir, abs))}: it resolves outside the vault (${real})`,
-      );
-    }
+    assertInside(this.dir, abs);
   }
 
   /** Force one path to be reparsed even on filesystems with coarse mtimes. */

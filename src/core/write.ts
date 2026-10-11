@@ -82,6 +82,37 @@ export function withNoteLock<T>(vaultDir: string, notePath: string, fn: () => T)
   }
 }
 
+/**
+ * Throw unless `abs` really lives inside `rootDir` once symlinks are resolved.
+ * The target may not exist yet, so its deepest existing ancestor is resolved.
+ */
+export function assertInside(rootDir: string, abs: string): void {
+  const root = fs.realpathSync(rootDir);
+  const rel = path.relative(rootDir, abs).split(path.sep).join("/");
+  // lstat, not exists: a dangling symlink counts as present, so a write can't
+  // follow it to create its target somewhere else.
+  let probe = abs;
+  while (!lexists(probe) && path.dirname(probe) !== probe) probe = path.dirname(probe);
+  let real: string;
+  try {
+    real = fs.realpathSync(probe);
+  } catch {
+    throw new Error(`Refusing to write ${rel}: it goes through a broken symlink`);
+  }
+  if (real !== root && !real.startsWith(`${root}${path.sep}`)) {
+    throw new Error(`Refusing to write ${rel}: it resolves outside the vault (${real})`);
+  }
+}
+
+function lexists(p: string): boolean {
+  try {
+    fs.lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Replace a file atomically using a same-directory temporary file. */
 export function atomicWriteFile(file: string, content: string): void {
   const dir = path.dirname(file);
