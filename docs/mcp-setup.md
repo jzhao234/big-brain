@@ -60,8 +60,10 @@ Defaults:
 
 - Endpoint: `http://127.0.0.1:3333/mcp`
 - Health check: `http://127.0.0.1:3333/health`
-- Authentication: `Authorization: Bearer <BIG_BRAIN_MCP_TOKEN>`
-- The bearer token is checked before parsing the JSON body. Request bodies are limited to 1 MB; larger requests receive HTTP 413 with a JSON-RPC error.
+- Authentication: `Authorization: Bearer <BIG_BRAIN_MCP_TOKEN>`; the token must be at least 32 characters or the server won't start. `/health` needs no token.
+- The bearer token is checked before parsing the JSON body. Authenticated request bodies are limited to 1 MB; larger ones receive HTTP 413 with a JSON-RPC error (an unauthenticated request is refused before its size matters).
+- Stateless: each `POST /mcp` gets a JSON response. There are no sessions or server-sent event streams; `GET` and `DELETE` on `/mcp` return 405.
+- A port that's taken (or can't be bound) is reported and the process exits with status 1.
 - Requests without an `Origin` header (native MCP clients and curl) are allowed. Requests with an `Origin` must match an allowed origin exactly; the default list is empty, so browser-originated requests are refused until you configure it. This protects against DNS rebinding and cross-site requests as required by the MCP spec.
 
 Configuration:
@@ -70,7 +72,7 @@ Configuration:
 | --- | --- | --- |
 | `BIG_BRAIN_MCP_HOST` | `--host` | `127.0.0.1` |
 | `BIG_BRAIN_MCP_PORT` | `--port` | `3333` |
-| `BIG_BRAIN_MCP_ALLOWED_HOSTS` | `--allowed-hosts` | Localhost protection |
+| `BIG_BRAIN_MCP_ALLOWED_HOSTS` | `--allowed-hosts` | Localhost-only Host check when bound to localhost; none (with a warning) on other addresses |
 | `BIG_BRAIN_MCP_ALLOWED_ORIGINS` | `--allowed-origins` | Empty (browser origins refused) |
 
 The allowed-host value is a comma-separated list, such as `brain.example.com,localhost,127.0.0.1`. Set it to the hostname clients send through your reverse proxy.
@@ -99,9 +101,9 @@ ChatGPT's connector system and the OpenAI Agents SDK both speak MCP. Local stdio
 
 ## Errors and shutdown
 
-A tool that can't do what was asked returns an MCP tool error (`isError: true`) with a one-line reason, including `read_note` and `note_links` for a note that doesn't exist, so clients don't have to parse prose to spot a failure.
+A tool that can't do what was asked returns an MCP tool error (`isError: true`) with the reason, including `read_note` and `note_links` for a note that doesn't exist, so clients don't have to parse prose to spot a failure. (Authentication, body, and transport problems on the HTTP server are HTTP errors instead.)
 
-With [auto-push](vault-spec.md#auto-commit) on, both servers push in the background. On Ctrl-C or SIGTERM (and, for stdio, when the client closes the connection) they wait up to 10 seconds for a queued push before exiting; anything still unpushed goes out with the next write.
+With [auto-push](vault-spec.md#auto-commit) on, both servers push in the background. On Ctrl-C or SIGTERM to the server process (and, for stdio, when the client closes the connection) they wait up to 10 seconds for a queued push before exiting; the HTTP server starts that wait once open requests finish. Anything still unpushed goes out with the next successful push. The `big-brain mcp` / `mcp-http` wrappers exit nonzero if the server is killed by a signal.
 
 ## Multiple vaults
 
