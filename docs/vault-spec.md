@@ -117,7 +117,7 @@ Checkboxes in fenced code blocks and in the frontmatter block aren't tasks.
 
 Task IDs (shown by `list_tasks` / `big-brain tasks`) are derived from file path + task text, so they're stable until the task is reworded (completing, rescheduling, or reprioritizing keeps the id). `update_task` reports the new id when it rewords one. Tasks with identical text in the same file are numbered in order, so if one copy is deleted the next takes its id; re-list before acting on an id you saved earlier.
 
-`complete_task` and `update_task` accept an id or text, matched in that order: id (exact), then a task's whole text, then a unique fragment (text matches are case-insensitive). So `Call Bob` completes that task even when `Call Bob about invoice` also exists; a fragment that matches several tasks is refused with the candidates listed. A task is only rewritten if its line still reads as it did when it was matched, so an edit landing between the match and the write makes the call fail instead of changing the wrong line.
+`complete_task` and `update_task` accept an id or text, matched in that order: id (exact), then a task's whole text, then a unique fragment (text matches are case-insensitive). So `Call Bob` completes that task even when `Call Bob about invoice` also exists; a fragment that matches several tasks is refused with the candidates listed. A task is only rewritten if its line still reads as it did when it was matched, checked when the note is re-read under the lock, so an edit made before that point makes the call fail instead of changing the wrong line. (An editor saving in the instant after that check isn't caught; see [Known limits](#known-limits).)
 
 By convention tasks live in a project's `## Tasks` section or a daily note; `add_task` defaults accordingly.
 
@@ -139,7 +139,7 @@ A few more write rules:
 
 - **Writes stay in the vault.** Reads follow symlinks inside the vault, but a write whose real location (through a symlinked folder or note) is outside it is refused. So is a `folders.archive` that points outside the vault.
 - **Line endings are kept.** Edits write a note back with the line ending most of it already uses, so a CRLF note stays CRLF.
-- **Filenames** come from the title, minus characters that are unsafe in filenames or wikilinks (`\ / : * ? " < > | # ^ [ ]`). The name before `.md` is capped at 120 UTF-16 code units and 200 bytes, so titles in non-Latin scripts are cut sooner, and never mid-character.
+- **Filenames** come from the title, minus characters that are unsafe in filenames or wikilinks (`\ / : * ? " < > | # ^ [ ]`). The name before `.md` is capped at 120 UTF-16 code units and 200 bytes, so titles in non-Latin scripts are cut sooner, and never mid-character; a collision suffix (` 2`) is added after the cap.
 
 ## Known limits
 
