@@ -1,6 +1,6 @@
 {
   "name": "@jzhao234/big-brain",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "A plain-markdown second brain for you and your AI assistants: an Obsidian-compatible vault, MCP server, and CLI for notes, projects, and tasks.",
   "keywords": [
     "second-brain",

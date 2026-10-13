@@ -13,14 +13,22 @@ Each AI tool keeps its own private memory of you, and none of them share it. big
 ## 60-second start
 
 ```bash
+npx @jzhao234/big-brain setup
+```
+
+That one command installs big-brain, creates a vault at `~/brain`, connects Claude Code and Codex if you have them (MCP server plus the `/brain`, `/capture`, and `/weekly` skills), and prints the config to paste into Claude Desktop or Cursor. Pass a folder to use a different one, such as your Obsidian vault: `npx @jzhao234/big-brain setup ~/Obsidian`. It's safe to run again (anything already set up is left alone), and `--dry-run` shows the plan without changing anything.
+
+Then restart your assistant and ask *"what am I working on?"* or *"capture: call the dentist on Friday"*. Other clients, and browser chats like claude.ai and ChatGPT, are covered in [Connect your AI tools](#connect-your-ai-tools).
+
+Prefer to do it by hand? These three lines are what `setup` does for Claude Code:
+
+```bash
 npm install -g @jzhao234/big-brain
-big-brain init ~/brain          # or skip this and point --vault at your Obsidian vault
+big-brain init ~/brain
 claude mcp add --scope user big-brain -- big-brain-mcp --vault ~/brain
 ```
 
-Then ask your assistant *"what am I working on?"* or *"capture: call the dentist on Friday"*. Other clients, and browser chats like claude.ai and ChatGPT, are covered in [Connect your AI tools](#connect-your-ai-tools).
-
-**Already use Obsidian?** big-brain reads an existing vault as is: no config file, no migration, and nothing is written until you ask for a change. Add a `brain.config.json` later to map your folder names, one entry per folder (for example, `"folders": {"projects": "Projects", "inbox": "Inbox"}`), so projects and captures land where you keep them. See [docs/vault-spec.md](docs/vault-spec.md).
+**Already use Obsidian?** big-brain reads an existing vault as is: no config file, no migration, and nothing is written until you ask for a change (`setup` writes nothing into it either). Add a `brain.config.json` later to map your folder names, one entry per folder (for example, `"folders": {"projects": "Projects", "inbox": "Inbox"}`), so projects and captures land where you keep them. See [docs/vault-spec.md](docs/vault-spec.md).
 
 ## What you get
 
@@ -248,6 +256,7 @@ Plus three MCP prompts: `orient`, `weekly-review`, `process-inbox`.
 ## CLI
 
 ```
+big-brain setup [dir]           one-step install + connect
 big-brain init [dir]            scaffold a vault        big-brain tasks [-p X] [-t tag] [--due-by D]
 big-brain status                overview                big-brain task add|done ...
 big-brain search <query>        search (hybrid if on)   big-brain projects [--status active]

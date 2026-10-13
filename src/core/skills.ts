@@ -38,15 +38,16 @@ export interface InstallSkillsResult {
 }
 
 /**
- * Copy the bundled brain skills (brain, capture, weekly) into a Claude Code
- * skills directory. Skips skills that already exist unless `force` is set, so
- * re-running is safe and won't clobber a user's edits by default.
+ * Copy the bundled brain skills (brain, capture, weekly) for one agent
+ * (default Claude Code) into its skills directory. Skips skills that already
+ * exist unless `force` is set, so re-running is safe and won't clobber a
+ * user's edits by default.
  */
 export function installSkills(
   targetDir: string = defaultClaudeSkillsDir(),
-  opts: { force?: boolean } = {},
+  opts: { force?: boolean; agent?: string } = {},
 ): InstallSkillsResult {
-  const src = skillsDir();
+  const src = skillsDir(opts.agent);
   fs.mkdirSync(targetDir, { recursive: true });
   const installed: string[] = [];
   const skipped: string[] = [];

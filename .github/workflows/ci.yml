@@ -66,6 +66,8 @@ jobs:
           big-brain --version
           big-brain init /tmp/packed-vault --name Packed
           big-brain --vault /tmp/packed-vault status
+          big-brain setup /tmp/setup-vault --no-claude --no-codex
+          test -f /tmp/setup-vault/brain.config.json
           init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}'
           echo "$init" | big-brain-mcp --vault /tmp/packed-vault | grep -q '"name":"big-brain"'
           echo "$init" | BIG_BRAIN_VAULT=/tmp/packed-vault big-brain mcp | grep -q '"name":"big-brain"'
