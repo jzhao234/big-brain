@@ -1,6 +1,6 @@
 # Vault specification
 
-A big-brain vault is a directory of markdown files plus one config file. The markdown conventions below are what the tools understand — none of them is enforced, and a vault remains a valid vault (and a valid Obsidian vault) if you break them. `brain.config.json` is the exception: it is checked when the vault opens, and a malformed one stops the tools with an error naming the field.
+A big-brain vault is a directory of markdown files plus one config file. The markdown conventions below are what the tools understand. None of them is enforced, and a vault remains a valid vault (and a valid Obsidian vault) if you break them. `brain.config.json` is the exception: it is checked when the vault opens, and a malformed one stops the tools with an error naming the field.
 
 ## Layout
 
@@ -15,9 +15,9 @@ The folder names are defaults; override them in `brain.config.json` if you're ad
 | `notes/` | `note` | Evergreen knowledge notes. |
 | `people/` | `person` | One note per person. |
 | `reference/` | `reference` | External facts: docs, credentials-adjacent info, how-tos. |
-| `archive/` | — | Retired notes of any type, moved here instead of deleted. Excluded from search/listing by default; original subfolder is preserved (`archive/projects/Old.md`). |
-| `templates/` | — | Note templates. Never indexed. |
-| `agents/` | — | Coding-agent profiles (skills, instructions, settings) for `big-brain agents`. Never indexed. |
+| `archive/` | none | Retired notes of any type, moved here instead of deleted. Excluded from search/listing by default; original subfolder is preserved (`archive/projects/Old.md`). |
+| `templates/` | none | Note templates. Never indexed. |
+| `agents/` | none | Coding-agent profiles (skills, instructions, settings) for `big-brain agents`. Never indexed. |
 
 A note's `type` comes from frontmatter when present, otherwise from the deepest configured folder that contains it.
 
@@ -42,9 +42,9 @@ All keys optional. `folders` only needs the entries you rename; a folder may be 
 
 ### Search & embeddings (hybrid retrieval)
 
-Search is lexical by default (MiniSearch full-text: fuzzy, prefix, title-boosted) and needs no setup. Setting `embeddings.enabled: true` adds a **fully local semantic layer**: a small embedding model runs on-device via the opt-in `@huggingface/transformers` runtime add-on (the model — default `Xenova/all-MiniLM-L6-v2`, ~23MB — downloads once to `~/.cache/big-brain/models`). Install the add-on alongside big-brain first; from a source checkout run `npm install --no-save --package-lock=false @huggingface/transformers@^3.8.1`, or for a global npm install use `npm i -g big-brain @huggingface/transformers@^3.8.1`. Queries then fuse the lexical and semantic rankings with Reciprocal Rank Fusion, so paraphrases match ("buying property" finds the house-hacking note) while exact identifiers keep working. No API keys; no note content leaves the machine.
+Search is lexical by default (MiniSearch full-text: fuzzy, prefix, title-boosted) and needs no setup. Setting `embeddings.enabled: true` adds a **fully local semantic layer**: a small embedding model runs on-device via the opt-in `@huggingface/transformers` runtime add-on (the model downloads once to `~/.cache/big-brain/models`; the default is `Xenova/all-MiniLM-L6-v2`, ~23MB). Install the add-on alongside big-brain first; from a source checkout run `npm install --no-save --package-lock=false @huggingface/transformers@^3.8.1`, or for a global npm install use `npm i -g big-brain @huggingface/transformers@^3.8.1`. Queries then fuse the lexical and semantic rankings with Reciprocal Rank Fusion, so paraphrases match ("buying property" finds the house-hacking note) while exact identifiers keep working. No API keys; no note content leaves the machine.
 
-The index lives at `.bigbrain/embeddings.json` inside the vault — **derived and rebuildable**, so it's gitignored (each machine builds its own; the starter `.gitignore` covers it). An index file that is unreadable or the wrong shape is discarded and rebuilt. Notes are chunked on `##` boundaries (~1200 chars; oversized paragraphs split at word boundaries, so no text is dropped) and re-embedded incrementally when their content hash changes; this happens automatically during search, or explicitly. Search filters (type, tag, folder, archived) apply before semantic candidates are ranked, so excluded notes never crowd out matches.
+The index lives at `.bigbrain/embeddings.json` inside the vault. It is **derived and rebuildable**, so it's gitignored (each machine builds its own; the starter `.gitignore` covers it). An index file that is unreadable or the wrong shape is discarded and rebuilt. Notes are chunked on `##` boundaries (~1200 chars; oversized paragraphs split at word boundaries, so no text is dropped) and re-embedded incrementally when their content hash changes; this happens automatically during search, or explicitly. Search filters (type, tag, folder, archived) apply before semantic candidates are ranked, so excluded notes never crowd out matches.
 
 ```
 big-brain index             # embed new/changed notes
@@ -53,13 +53,13 @@ big-brain index --rebuild   # discard and re-embed everything
 big-brain search "..." --lexical   # bypass the semantic layer for one query
 ```
 
-Semantic similarity also powers part of `related_notes` / `big-brain related` — the rest of that tool (links, co-citations, rarity-weighted shared tags, unlinked title mentions) is fully deterministic and works with embeddings off.
+Semantic similarity also powers part of `related_notes` / `big-brain related`. The rest of that tool (links, co-citations, rarity-weighted shared tags, unlinked title mentions) is fully deterministic and works with embeddings off.
 
 ### Auto-commit
 
 With `git.autoCommit: true`, every note write through the tool (any MCP tool, the CLI, from any LLM; not `init`, skill installs, or the derived search index) stages and commits only the note paths touched by that operation, without sweeping in unrelated staged, unstaged, or untracked work. Existing edits within a touched note are included because git cannot separate ownership at the hunk level. Set `git.autoPush: true` to also push after each commit and keep other devices in sync.
 
-Pushes run **in the background**, so a save never waits on the network: a CLI command returns (and exits) as soon as the commit is made, while a detached `git push` finishes on its own. A long-running MCP server coalesces pushes, so commits made while a push is running are covered by one follow-up push, and on shutdown it waits up to 10 seconds for a queued push before exiting: the stdio server on Ctrl-C, SIGTERM, or the client closing the connection, and the HTTP server once open requests have finished. Send the signal to the server process itself; the `big-brain mcp` / `mcp-http` wrappers don't forward signals. A server killed outright, or a push still queued after that wait, leaves those commits local until the next successful push. `authorName`/`authorEmail` set the commit identity — set both on shared boxes to avoid commits attributed to a system user; leave them empty to use the repo/global git identity.
+Pushes run **in the background**, so a save never waits on the network: a CLI command returns (and exits) as soon as the commit is made, while a detached `git push` finishes on its own. A long-running MCP server coalesces pushes, so commits made while a push is running are covered by one follow-up push, and on shutdown it waits up to 10 seconds for a queued push before exiting: the stdio server on Ctrl-C, SIGTERM, or the client closing the connection, and the HTTP server once open requests have finished. Send the signal to the server process itself; the `big-brain mcp` / `mcp-http` wrappers don't forward signals. A server killed outright, or a push still queued after that wait, leaves those commits local until the next successful push. `authorName`/`authorEmail` set the commit identity. Set both on shared boxes to avoid commits attributed to a system user; leave them empty to use the repo/global git identity.
 
 It is **best-effort**: the file is written first, so if the vault isn't a git repo, has nothing to stage, or git errors (offline, no upstream, rejected push), the save still succeeds and nothing is lost. Real git failures print a warning to stderr (for a background push, only while the process is still running); a vault that isn't a repo, or a write with nothing to commit, is skipped silently. Commits are per write, giving a fine-grained history (every capture, log line, and status change is its own commit); a push that fails stays committed locally and syncs on the next successful push. Requires `git` on `PATH`.
 
@@ -89,7 +89,7 @@ If the block exists but isn't valid YAML, the note still loads (its metadata rea
 
 ## Links, tags, titles
 
-- **Wikilinks**: `[[Note Title]]`, `[[Note Title|shown text]]`, `[[Note Title#Heading]]`. Targets resolve against titles, aliases, and filename stems, case-insensitively. Ambiguity prefers non-archived notes, then shorter paths — but keep names unique (the doctor flags duplicates).
+- **Wikilinks**: `[[Note Title]]`, `[[Note Title|shown text]]`, `[[Note Title#Heading]]`. Targets resolve against titles, aliases, and filename stems, case-insensitively. Ambiguity prefers non-archived notes, then shorter paths, but keep names unique (the doctor flags duplicates).
 - **Tags**: inline `#tag` (letters, digits, `/`, `-`, `_`; must start with a letter) or frontmatter `tags:`. Compared lowercase.
 - **Code is ignored**: links, tags, and headings inside fenced code blocks (fences of three or more backticks or tildes, closed only by a fence of the same character at least as long) or inline code don't count, and neither do task lines inside fences, so a `# comment` in a shell snippet is never mistaken for a section. A fence left open runs to the end of the note; appends close it first. (Task metadata is read from the whole task line, including any inline code on it.)
 - **A note's title** is frontmatter `title` if set, else the first `# H1`, else the filename stem.
@@ -123,7 +123,7 @@ By convention tasks live in a project's `## Tasks` section or a daily note; `add
 
 ## Daily notes
 
-`daily/YYYY-MM-DD.md`, created on demand from `templates/daily.md`. The `## Log` section is the work journal: `daily_log` appends `- YYYY-MM-DD HH:mm — entry` lines. Agents are encouraged to log decisions and progress as they happen.
+`daily/YYYY-MM-DD.md`, created on demand from `templates/daily.md`. The `## Log` section is the work journal: `daily_log` appends lines in the form `- YYYY-MM-DD HH:mm — entry`. Agents are encouraged to log decisions and progress as they happen.
 
 ## Templates
 

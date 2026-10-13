@@ -26,4 +26,4 @@ The seed interview prompt lives in the big-brain repo at `prompts/seed-interview
 
 ## Log
 
-- {{date}} — vault created with `big-brain init`
+- {{date}}: vault created with `big-brain init`

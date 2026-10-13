@@ -1,6 +1,6 @@
 # Agent instructions for this vault
 
-You are working inside the user's second brain — a big-brain markdown vault. Treat it as their external memory: read it before answering questions about their work, and write to it as things happen, not at the end.
+You are working inside the user's second brain, a big-brain markdown vault. Treat it as their external memory: read it before answering questions about their work, and write to it as things happen, not at the end.
 
 ## Orientation
 
@@ -16,10 +16,10 @@ At the start of a session that touches ongoing work, get the lay of the land fir
 
 ## Conventions
 
-- Wikilinks (`[[Note Title]]`) are the connective tissue — link every new note to at least one existing note or project.
+- Wikilinks (`[[Note Title]]`) are the connective tissue. Link every new note to at least one existing note or project.
 - Frontmatter drives structure: `type`, `status`, `tags`, `due`. Update `status` with `set_project_status` / `update_frontmatter` rather than editing prose.
 - Tasks are `- [ ]` checkboxes. Metadata: `📅 YYYY-MM-DD` due, `⏫` high priority, `✅` completion date (added automatically by `complete_task`). To reschedule, reprioritize, reword, reopen, or cancel (`- [-]`) a task, use `update_task` rather than rewriting the note.
-- Prefer `append_note` over rewriting; never delete — `archive_note` instead.
+- Prefer `append_note` over rewriting; never delete. Use `archive_note` instead.
 - Dates are absolute (`2026-07-07`), never "yesterday" or "next week".
 
 ## Tone of vault content

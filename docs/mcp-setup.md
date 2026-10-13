@@ -97,7 +97,7 @@ ChatGPT's connector system and the OpenAI Agents SDK both speak MCP. Local stdio
 ## Anything else
 
 - Any MCP-over-stdio client: point it at `big-brain-mcp --vault <dir>`.
-- No MCP support at all? The CLI is scriptable (`big-brain search --json`, `big-brain tasks --json`) and the vault is just markdown — even a plain shell tool loop can use it.
+- No MCP support at all? The CLI is scriptable (`big-brain search --json`, `big-brain tasks --json`) and the vault is just markdown, so even a plain shell tool loop can use it.
 
 ## Errors and shutdown
 
