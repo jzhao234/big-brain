@@ -20,7 +20,7 @@ claude mcp add --scope user big-brain -- big-brain-mcp --vault ~/brain
 
 Then ask your assistant *"what am I working on?"* or *"capture: call the dentist on Friday"*. Other clients, and browser chats like claude.ai and ChatGPT, are covered in [Connect your AI tools](#connect-your-ai-tools).
 
-**Already use Obsidian?** big-brain reads an existing vault as is: no config file, no migration, and nothing is written until you ask for a change. Add a `brain.config.json` later to map your folder names (for example, `"folders": {"projects": "Projects"}`) so projects and the inbox land where you keep them. See [docs/vault-spec.md](docs/vault-spec.md).
+**Already use Obsidian?** big-brain reads an existing vault as is: no config file, no migration, and nothing is written until you ask for a change. Add a `brain.config.json` later to map your folder names, one entry per folder (for example, `"folders": {"projects": "Projects", "inbox": "Inbox"}`), so projects and captures land where you keep them. See [docs/vault-spec.md](docs/vault-spec.md).
 
 ## What you get
 
@@ -31,7 +31,7 @@ Then ask your assistant *"what am I working on?"* or *"capture: call the dentist
 - **Projects as the unit of work.** Each project is one file with a goal, checkbox tasks, and a running log.
 - **Deterministic retrieval first:** fuzzy full-text search with title boosting, `[[wikilink]]` backlinks, tags, and frontmatter filters. No API keys, and it works offline.
 - **Optional local semantic search.** Turn on `embeddings.enabled` and a small on-device model (via `@huggingface/transformers`) adds meaning-based matches, fused with full-text search by Reciprocal Rank Fusion. Paraphrases match, exact terms still count, and nothing leaves your machine. It also powers `related_notes`. See [docs/vault-spec.md](docs/vault-spec.md#search--embeddings-hybrid-retrieval).
-- **Optional git auto-commit and push.** With one config flag, every note write from any tool commits only the files it touched and pushes in the background, so your other machines stay in sync. A git failure never blocks a save: the note is saved, just not committed.
+- **Optional git auto-commit and push.** Turn on `git.autoCommit` and every note write from any tool commits only the files it touched; add `git.autoPush` to push in the background so your other machines stay in sync. A git failure never blocks a save: if the commit fails the note is still saved, and if the push fails the commit stays local until the next push.
 - **Edits that don't damage notes.** Writes are atomic and locked per note, keep each note's line endings, never land inside code blocks or frontmatter, refuse to rewrite frontmatter they can't parse, and refuse to write anywhere that resolves outside the vault (such as through a symlink). [docs/vault-spec.md](docs/vault-spec.md#known-limits) lists the edge cases these don't cover.
 
 Requires Node 20 or newer. big-brain is pre-1.0: it's used daily, but minor versions may still change behavior; see the [changelog](CHANGELOG.md).
