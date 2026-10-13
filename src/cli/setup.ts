@@ -120,9 +120,9 @@ function runWindows(
   }
   const resolved = findOnPath(command, deps) ?? command;
   if (resolved.toLowerCase().endsWith(".exe")) return spawnSync(resolved, args, opts);
-  if (args.some((a) => CMD_UNSAFE.test(a))) {
+  if ([resolved, ...args].some((a) => CMD_UNSAFE.test(a))) {
     return {
-      refused: `an argument contains a character cmd.exe would change (${CMD_UNSAFE.source}); run the command yourself`,
+      refused: `the command or an argument contains a character cmd.exe would change (${CMD_UNSAFE.source}); run the command yourself`,
     };
   }
   const quoted = args.map((a) => (/[\s&|<>()]/.test(a) ? `"${a}"` : a));
@@ -209,6 +209,9 @@ export function classifyVault(
     (opts.platform ?? process.platform) === "linux" ? p : p.toLowerCase();
   const target = fold(canonical(abs));
   const homeDir = fold(canonical(home));
+  if (target === fold(path.parse(target).root)) {
+    throw new Error(`Refusing to use ${abs} as a vault: it is a filesystem root.`);
+  }
   if (isInside(homeDir, target)) {
     throw new Error(
       `Refusing to use ${abs} as a vault: it is (or contains) your home folder. Pick a dedicated folder such as ~/brain.`,
@@ -362,15 +365,47 @@ function resolveServer(opts: SetupOptions, deps: SetupDeps, steps: SetupStep[]):
   return launchFrom(found.root, "global", deps);
 }
 
-/** Summarize `claude mcp get` / `codex mcp get` output for an existing registration. */
+/**
+ * Absolute paths among space-split tokens that don't exist. The output isn't
+ * quoted, so a token is first re-joined with the ones after it in case the
+ * path contains spaces.
+ */
+function missingPaths(tokens: string[]): string[] {
+  const missing: string[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i] as string;
+    if (!path.isAbsolute(t)) continue;
+    let j = i;
+    let candidate = t;
+    while (!fs.existsSync(candidate) && j + 1 < tokens.length && !tokens[j + 1]?.startsWith("-")) {
+      j++;
+      candidate = `${candidate} ${tokens[j]}`;
+    }
+    if (fs.existsSync(candidate)) i = j;
+    else missing.push(t);
+  }
+  return missing;
+}
+
+/**
+ * Summarize `claude mcp get` / `codex mcp get` output for an existing
+ * registration. It counts as broken when a reported status isn't connected or
+ * an absolute path it launches (node, script, vault) no longer exists.
+ */
 function describeExisting(output: string): { summary: string; broken: boolean; scope?: string } {
   const field = (name: string) =>
     new RegExp(`^\\s*${name}:\\s*(.+)$`, "mi").exec(output)?.[1]?.trim();
   const scope = field("Scope");
   const status = field("Status");
   const command = [field("Command"), field("Args")].filter(Boolean).join(" ");
+  const missing = missingPaths(command.split(/\s+/));
   const summary = [scope, status, command].filter(Boolean).join("; ");
-  return { summary, broken: status !== undefined && !/connected/i.test(status), scope };
+  const disconnected = status !== undefined && !/^(✔\s*)?connected\b/i.test(status);
+  return {
+    summary: missing.length > 0 ? `${summary}; missing: ${missing.join(", ")}` : summary,
+    broken: disconnected || missing.length > 0,
+    scope,
+  };
 }
 
 function registerClient(
@@ -410,7 +445,7 @@ function registerClient(
       client === "claude"
         ? ["mcp", "add", "--scope", "user", SERVER_NAME, "--", ...launch]
         : ["mcp", "add", SERVER_NAME, "--", ...launch];
-    const shown = `${client} ${args.map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(" ")}`;
+    const shown = [client, ...args].map(shellQuote).join(" ");
     if (opts.dryRun) {
       steps.push({ step: `${label} MCP`, status: "planned", detail: shown });
     } else {
@@ -499,10 +534,15 @@ export function guiConfigSnippet(result: SetupResult): string | null {
   );
 }
 
+/** Quote one argument for a POSIX shell so it is taken literally. */
+export function shellQuote(arg: string): string {
+  return /^[\w@%+=:,./-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, "'\\''")}'`;
+}
+
 /** A shell line that sets BIG_BRAIN_VAULT to `vault`, quoted so the path is taken literally. */
 export function vaultEnvLine(vault: string, platform: NodeJS.Platform): string {
   if (platform === "win32") {
     return `PowerShell: [Environment]::SetEnvironmentVariable('BIG_BRAIN_VAULT', '${vault.replace(/'/g, "''")}', 'User')`;
   }
-  return `export BIG_BRAIN_VAULT='${vault.replace(/'/g, "'\\''")}'`;
+  return `export BIG_BRAIN_VAULT=${shellQuote(vault)}`;
 }
