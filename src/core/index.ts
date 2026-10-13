@@ -69,4 +69,4 @@ export type {
 } from "./types.js";
 export { makeExcerpt, nowStamp, safeFilename, shortHash, todayISO } from "./util.js";
 export { Vault, type CreateNoteInput } from "./vault.js";
-export { VERSION } from "./version.js";
+export { PACKAGE_NAME, VERSION } from "./version.js";

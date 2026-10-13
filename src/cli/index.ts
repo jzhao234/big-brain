@@ -31,7 +31,14 @@ import { type TaskStatus, addTask, completeTask, listTasks, updateTask } from ".
 import type { TaskItem } from "../core/types.js";
 import { todayISO } from "../core/util.js";
 import { Vault } from "../core/vault.js";
-import { VERSION } from "../core/version.js";
+import { PACKAGE_NAME, VERSION } from "../core/version.js";
+import {
+  type StepStatus,
+  defaultSetupDeps,
+  guiConfigSnippet,
+  runSetup,
+  vaultEnvLine,
+} from "./setup.js";
 
 const program = new Command();
 
@@ -596,6 +603,80 @@ program
       fail(err);
     }
   });
+
+const SETUP_MARKS: Record<StepStatus, string> = {
+  done: pc.green("+"),
+  kept: pc.dim("="),
+  skipped: pc.dim("-"),
+  failed: pc.red("!"),
+  planned: pc.yellow("~"),
+};
+
+program
+  .command("setup [dir]")
+  .description(
+    "one-step setup: install, create or adopt a vault (default ~/brain), connect Claude Code and Codex",
+  )
+  .option("--name <name>", "display name for a new vault")
+  .option("--no-global", "when run through npx, don't install globally; clients launch it with npx")
+  .option("--no-claude", "don't register with Claude Code")
+  .option("--no-codex", "don't register with Codex")
+  .option("--adopt", "use a folder that looks like a code project as the vault anyway")
+  .option("--dry-run", "show what would happen without changing anything")
+  .action(
+    (
+      dir: string | undefined,
+      opts: {
+        name?: string;
+        global: boolean;
+        claude: boolean;
+        codex: boolean;
+        adopt?: boolean;
+        dryRun?: boolean;
+      },
+    ) => {
+      try {
+        const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+        const deps = defaultSetupDeps(packageRoot);
+        const result = runSetup(
+          { ...opts, dir: dir ?? program.opts<{ vault?: string }>().vault },
+          deps,
+        );
+        console.log(pc.bold(opts.dryRun ? "big-brain setup (dry run)" : "big-brain setup"));
+        for (const s of result.steps) {
+          console.log(`  ${SETUP_MARKS[s.status]} ${pc.bold(s.step)}: ${s.detail}`);
+        }
+        const snippet = guiConfigSnippet(result);
+        if (snippet) {
+          console.log(
+            `\nClaude Desktop, Cursor, and other MCP apps: add this to their MCP config file.\n${snippet}`,
+          );
+          console.log(
+            pc.dim(
+              "(These are absolute paths. If you switch Node versions, update them, and re-register\n" +
+                " Claude Code or Codex with `claude mcp remove big-brain` / `codex mcp remove big-brain`\n" +
+                " followed by setup again.)",
+            ),
+          );
+        } else {
+          console.log(
+            `\nNo config printed for Claude Desktop or Cursor: they start apps without your shell's PATH,\nso they need a global install. Run ${pc.bold(`npm install -g ${PACKAGE_NAME}`)} and then setup again.`,
+          );
+        }
+        console.log(
+          `\nSo \`big-brain\` commands find this vault from any folder, add this to your shell profile:\n  ${vaultEnvLine(result.vault, process.platform)}`,
+        );
+        if (!opts.dryRun) {
+          console.log(
+            `\nNext: restart Claude Code or Codex and ask ${pc.bold('"what am I working on?"')}`,
+          );
+        }
+        if (result.steps.some((s) => s.status === "failed")) process.exitCode = 1;
+      } catch (err) {
+        fail(err);
+      }
+    },
+  );
 
 // --- agents: each coding agent's setup, kept in the vault -------------------
 

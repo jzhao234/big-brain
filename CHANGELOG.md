@@ -4,6 +4,12 @@ All notable changes to big-brain. The format follows [Keep a Changelog](https://
 
 ## Unreleased
 
+## 0.3.1 (2026-10-13)
+
+### Added
+
+- `big-brain setup [dir]`: one command (`npx @jzhao234/big-brain setup`) installs big-brain globally, creates or adopts a vault, registers the MCP server and skills with Claude Code and Codex when they're installed, and prints config for Claude Desktop and Cursor. Rerunning it changes nothing; `--dry-run` shows the plan.
+
 ## 0.3.0 (2026-10-12)
 
 First release on npm: `npm install -g @jzhao234/big-brain`.
