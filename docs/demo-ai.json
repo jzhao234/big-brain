@@ -1,0 +1,36 @@
+[
+  {
+    "prompt": "what am I working on?",
+    "tools": [
+      {
+        "name": "mcp__big-brain__brain_overview",
+        "input": {}
+      }
+    ],
+    "answer": "You have three active projects. Two tasks are due this week.\n\n**Due soon**\n- **Tomorrow (Oct 14):** Get a second quote from the cabinet shop. This is for the Kitchen renovation.\n- **Friday (Oct 16):** Draft issue #1. This is for Launch the newsletter.\n\n**Active projects**\n| Project | Open tasks | Next step |\n|---|---|---|\n| Kitchen renovation | 1 | Second cabinet quote |\n| Launch the newsletter | 2 | Draft issue #1 |\n| Set up my second brain | 6 | Connect the MCP server to your AI tools (see the big-brain README) |\n\n**Inbox (1 item):** \"Ask Sam about the conference talk slot,\" captured today. You haven't filed it yet. It could become a task in your daily note or go under a project.\n\nDo you want me to file that inbox item, or show the full task list for one of the projects?"
+  },
+  {
+    "prompt": "capture: ask the contractor whether the old sink can be reused",
+    "tools": [
+      {
+        "name": "mcp__big-brain__capture",
+        "input": {
+          "text": "Ask the contractor whether the old sink can be reused"
+        }
+      }
+    ],
+    "answer": "I saved \"Ask the contractor whether the old sink can be reused\" to your inbox, so there are now 2 items to process.\n\nIt looks like it belongs to the Kitchen renovation. Do you want me to make it a task on that project, maybe with tomorrow's cabinet quote so you can ask both at once?"
+  },
+  {
+    "prompt": "I got the second cabinet quote, mark that done",
+    "tools": [
+      {
+        "name": "mcp__big-brain__complete_task",
+        "input": {
+          "task": "2d87ee33"
+        }
+      }
+    ],
+    "answer": "I marked \"Get a second quote from the cabinet shop\" as done. That was the only open task in Kitchen renovation, so the project has no next step now.\n\nYou could move the sink question from your inbox into that project as its next task. Do you want me to add it, along with anything else that came out of the quotes, like comparing them or picking a shop?"
+  }
+]
