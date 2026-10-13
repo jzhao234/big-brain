@@ -1,6 +1,6 @@
 # big-brain 🧠
 
-[![npm](https://img.shields.io/npm/v/big-brain)](https://www.npmjs.com/package/big-brain)
+[![npm](https://img.shields.io/npm/v/@jzhao234/big-brain)](https://www.npmjs.com/package/@jzhao234/big-brain)
 [![CI](https://github.com/jzhao234/big-brain/actions/workflows/ci.yml/badge.svg)](https://github.com/jzhao234/big-brain/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -13,7 +13,7 @@ Each AI tool keeps its own private memory of you, and none of them share it. big
 ## 60-second start
 
 ```bash
-npm install -g big-brain
+npm install -g @jzhao234/big-brain
 big-brain init ~/brain          # or skip this and point --vault at your Obsidian vault
 claude mcp add --scope user big-brain -- big-brain-mcp --vault ~/brain
 ```
@@ -39,15 +39,15 @@ Requires Node 20 or newer. big-brain is pre-1.0: it's used daily, but minor vers
 ## Install
 
 ```bash
-npm install -g big-brain
+npm install -g @jzhao234/big-brain
 ```
 
-That puts three commands on your PATH: `big-brain` (the CLI), `big-brain-mcp` (the MCP server over stdio), and `big-brain-mcp-http` (the remote preview below). To try it without installing, `npx big-brain status --vault ~/brain` works too.
+That puts three commands on your PATH: `big-brain` (the CLI), `big-brain-mcp` (the MCP server over stdio), and `big-brain-mcp-http` (the remote preview below). To try it without installing, `npx @jzhao234/big-brain status --vault ~/brain` works too.
 
 The base install leaves out semantic search and its native dependencies. To enable local embeddings, install the add-on into the same place, then set `embeddings.enabled` to `true` in `brain.config.json`:
 
 ```bash
-npm install -g big-brain @huggingface/transformers@^3.8.1
+npm install -g @jzhao234/big-brain @huggingface/transformers@^3.8.1
 ```
 
 To work on big-brain itself, install from source instead: `git clone https://github.com/jzhao234/big-brain.git && cd big-brain && npm install && npm run build && npm link`. See [CONTRIBUTING.md](CONTRIBUTING.md).

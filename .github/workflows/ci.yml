@@ -47,7 +47,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
 
-  # Installs the packed tarball the way `npm install -g big-brain` would, so a
+  # Installs the packed tarball the way `npm install -g @jzhao234/big-brain` would, so a
   # missing file in "files" or a broken bin fails here instead of after publish.
   packed-install:
     runs-on: ubuntu-latest
@@ -60,7 +60,7 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run build
       - run: npm pack
-      - run: npm install -g ./big-brain-*.tgz
+      - run: npm install -g ./jzhao234-big-brain-*.tgz
       - name: Smoke-test the installed commands
         run: |
           big-brain --version
@@ -69,3 +69,6 @@ jobs:
           init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}'
           echo "$init" | big-brain-mcp --vault /tmp/packed-vault | grep -q '"name":"big-brain"'
           echo "$init" | BIG_BRAIN_VAULT=/tmp/packed-vault big-brain mcp | grep -q '"name":"big-brain"'
+          # The registry entry runs `npx @jzhao234/big-brain mcp`: npx must pick the big-brain bin.
+          tgz=$(ls "$GITHUB_WORKSPACE"/jzhao234-big-brain-*.tgz)
+          echo "$init" | BIG_BRAIN_VAULT=/tmp/packed-vault npx -y "file:$tgz" mcp | grep -q '"name":"big-brain"'

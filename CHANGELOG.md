@@ -6,7 +6,7 @@ All notable changes to big-brain. The format follows [Keep a Changelog](https://
 
 ## 0.3.0 (2026-10-12)
 
-First release on npm: `npm install -g big-brain`.
+First release on npm: `npm install -g @jzhao234/big-brain`.
 
 ### Added
 
