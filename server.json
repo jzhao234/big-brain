@@ -1,0 +1,37 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.jzhao234/big-brain",
+  "title": "Big Brain",
+  "description": "Plain-markdown second brain for you and your AI: notes, projects, tasks, search, links.",
+  "repository": {
+    "url": "https://github.com/jzhao234/big-brain",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/jzhao234/big-brain#readme",
+  "version": "0.3.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "big-brain",
+      "version": "0.3.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "BIG_BRAIN_VAULT",
+          "description": "Folder of your vault (an existing Obsidian vault works, or run `big-brain init` first)",
+          "format": "filepath",
+          "isRequired": true
+        }
+      ]
+    }
+  ]
+}

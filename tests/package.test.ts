@@ -29,3 +29,33 @@ describe("package manifest", () => {
     expect(manifest.peerDependenciesMeta?.["@huggingface/transformers"]).toBeUndefined();
   });
 });
+
+describe("release metadata", () => {
+  const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+    name: string;
+    version: string;
+    mcpName: string;
+  };
+  const server = JSON.parse(
+    fs.readFileSync(new URL("../server.json", import.meta.url), "utf8"),
+  ) as {
+    name: string;
+    description: string;
+    version: string;
+    packages: Array<{ identifier: string; version: string }>;
+  };
+
+  it("reports the package version from the CLI and MCP server", () => {
+    expect(core.VERSION).toBe(pkg.version);
+  });
+
+  it("keeps server.json in step with package.json", () => {
+    expect(server.name).toBe(pkg.mcpName);
+    expect(server.version).toBe(pkg.version);
+    expect(server.packages).toEqual([
+      expect.objectContaining({ identifier: pkg.name, version: pkg.version }),
+    ]);
+    // The MCP Registry rejects longer descriptions.
+    expect(server.description.length).toBeLessThanOrEqual(100);
+  });
+});

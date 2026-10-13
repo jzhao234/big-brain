@@ -31,13 +31,14 @@ import { type TaskStatus, addTask, completeTask, listTasks, updateTask } from ".
 import type { TaskItem } from "../core/types.js";
 import { todayISO } from "../core/util.js";
 import { Vault } from "../core/vault.js";
+import { VERSION } from "../core/version.js";
 
 const program = new Command();
 
 program
   .name("big-brain")
   .description("A plain-markdown second brain for humans and LLMs")
-  .version("0.2.0")
+  .version(VERSION)
   .option(
     "--vault <dir>",
     "vault directory (default: $BIG_BRAIN_VAULT or nearest brain.config.json)",
