@@ -1,7 +1,7 @@
 {
   "name": "big-brain",
-  "version": "0.2.0",
-  "description": "A plain-markdown second brain for humans and LLMs — Obsidian-compatible vault, MCP server, and CLI for notes, projects, and tasks that work with any AI assistant.",
+  "version": "0.3.0",
+  "description": "A plain-markdown second brain for you and your AI assistants: an Obsidian-compatible vault, MCP server, and CLI for notes, projects, and tasks.",
   "keywords": [
     "second-brain",
     "mcp",
@@ -12,7 +12,11 @@
     "pkm",
     "llm",
     "claude",
-    "tasks"
+    "tasks",
+    "mcp-server",
+    "ai-memory",
+    "agent-memory",
+    "obsidian-vault"
   ],
   "license": "MIT",
   "author": "Junhao Zhao",
@@ -20,6 +24,11 @@
     "type": "git",
     "url": "git+https://github.com/jzhao234/big-brain.git"
   },
+  "homepage": "https://github.com/jzhao234/big-brain#readme",
+  "bugs": {
+    "url": "https://github.com/jzhao234/big-brain/issues"
+  },
+  "mcpName": "io.github.jzhao234/big-brain",
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -45,7 +54,8 @@
     "test:watch": "vitest",
     "lint": "biome check src tests",
     "lint:fix": "biome check --write src tests",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run typecheck && npm run lint && npm test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

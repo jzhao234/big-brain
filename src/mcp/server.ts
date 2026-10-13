@@ -10,6 +10,7 @@ import { addTask, completeTask, listTasks, updateTask } from "../core/tasks.js";
 import type { Note } from "../core/types.js";
 import { nowStamp, toLF, todayISO } from "../core/util.js";
 import type { Vault } from "../core/vault.js";
+import { VERSION } from "../core/version.js";
 
 function text(s: string) {
   return { content: [{ type: "text" as const, text: s }] };
@@ -74,7 +75,7 @@ function taskRow(t: {
  * another agent) are always visible.
  */
 export function buildServer(vault: Vault): McpServer {
-  const server = new McpServer({ name: "big-brain", version: "0.2.0" });
+  const server = new McpServer({ name: "big-brain", version: VERSION });
   const fresh = <T>(fn: () => T): T => {
     vault.refresh();
     return fn();
