@@ -63,12 +63,22 @@ function addDays(isoDate: string, days: number): string {
   return `${date.getFullYear()}-${mm}-${dd}`;
 }
 
+function count(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? "" : "s"}`;
+}
+
 /** Human-readable one-screen rendering of the overview (used by CLI + MCP). */
 export function renderOverview(o: VaultOverview): string {
   const lines: string[] = [];
   lines.push(`# ${o.name} — overview`);
   lines.push(
-    `${o.stats.notes} notes · ${o.stats.projects} projects · ${o.stats.openTasks} open tasks · ${o.stats.tags} tags · ${o.stats.inboxItems} inbox items`,
+    [
+      count(o.stats.notes, "note"),
+      count(o.stats.projects, "project"),
+      count(o.stats.openTasks, "open task"),
+      count(o.stats.tags, "tag"),
+      count(o.stats.inboxItems, "inbox item"),
+    ].join(" · "),
   );
   if (o.activeProjects.length > 0) {
     lines.push("", "## Active projects");
