@@ -1,0 +1,25 @@
+name: Feature idea
+description: Suggest a change or a new tool
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: Check the scope section of CONTRIBUTING.md first. A short description of the problem is more useful than a full design.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help?
+  - type: dropdown
+    id: pr
+    attributes:
+      label: Would you open a pull request for it?
+      options:
+        - "Yes"
+        - Maybe, with guidance
+        - "No"
