@@ -8,7 +8,8 @@
 
 Each AI tool keeps its own private memory of you, and none of them share it. big-brain flips that around. Point it at a folder of markdown (a new vault, or the Obsidian vault you already have) and Claude Code, Claude Desktop, Cursor, Codex, or any other [MCP](https://modelcontextprotocol.io) client can search it, read it, capture into it, and keep your projects and tasks current. Switch models whenever you like; your context comes with you.
 
-<p align="center"><img src="docs/demo.svg" alt="Terminal demo: create a vault, capture a thought, start a project, add tasks, and print the overview" width="780"></p>
+<p align="center"><img src="docs/demo-ai.svg" alt="Claude Code using big-brain: it reads the overview, captures a note to the inbox, and marks a task done" width="780"></p>
+<p align="center"><sub>Replay of a real Claude Code conversation with a demo vault (<a href="docs/demo-ai.json">transcript</a>, recorded by <a href="scripts/demo-ai.mjs">scripts/demo-ai.mjs</a>); timing is illustrative.</sub></p>
 
 ## 60-second start
 
@@ -68,6 +69,8 @@ cd ~/brain
 big-brain status                           # look around
 big-brain install-skills                   # add the /brain, /capture, /weekly skills
 ```
+
+<p align="center"><img src="docs/demo.svg" alt="Terminal demo: create a vault, capture a thought, start a project, add tasks, and print the overview" width="780"></p>
 
 Then connect an AI tool (below) and, optionally, seed the vault from your existing AI history.
 
