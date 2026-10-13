@@ -1,8 +1,8 @@
 # Using the brain in a browser (claude.ai / ChatGPT) via GitHub
 
-The big-brain MCP server runs locally over stdio, so browser AIs — which run in the cloud — can't launch it. The zero-infrastructure way to reach your vault from a browser is to **connect the AI to your vault's GitHub repo** and let it read/write the markdown files directly. Nothing new is exposed: the repo already lives on GitHub, and its access controls apply.
+The big-brain MCP server runs locally over stdio, so browser AIs, which run in the cloud, can't launch it. The zero-infrastructure way to reach your vault from a browser is to **connect the AI to your vault's GitHub repo** and let it read/write the markdown files directly. Nothing new is exposed: the repo already lives on GitHub, and its access controls apply.
 
-**What you get:** the AI can browse, search, read, and (with write scope) edit + commit your notes. **What you give up vs. the MCP server:** the computed `brain_overview`, the fuzzy search index, and the task tools. It's raw file access — so paste [`prompts/browser-github-instructions.md`](../prompts/browser-github-instructions.md) into the tool so it knows the folder layout and conventions.
+**What you get:** the AI can browse, search, read, and (with write scope) edit + commit your notes. **What you give up vs. the MCP server:** the computed `brain_overview`, the fuzzy search index, and the task tools. It's raw file access, so paste [`prompts/browser-github-instructions.md`](../prompts/browser-github-instructions.md) into the tool so it knows the folder layout and conventions.
 
 ## Prerequisite
 
@@ -12,14 +12,14 @@ Your vault is a **private GitHub repo** (e.g. `jzhao234/brain`). If it isn't a r
 
 1. **Settings → Connectors.** Enable/add the **GitHub** connector and authorize it. Grant access to just your brain repo.
    - Reading works with the standard connector.
-   - **Writing (commits) needs write scope.** The robust route is to add **GitHub's official MCP server** as a custom connector (`https://api.githubcopilot.com/mcp/`) and grant it **repo write** — it exposes file-create/update tools. The basic browse connector may be read-only.
+   - **Writing (commits) needs write scope.** The robust route is to add **GitHub's official MCP server** as a custom connector (`https://api.githubcopilot.com/mcp/`) and grant it **repo write**; it exposes file-create/update tools. The basic browse connector may be read-only.
 2. Start a chat, enable the connector, and paste the browser instructions block (or put it in a Claude **Project**'s instructions so every chat in that project is brain-aware).
-3. Test loading: *"Read BRAIN.md and my projects/ folder — what am I working on?"* Test saving: *"Append a line to the Auth project's Log noting I rotated the key, and commit it."*
+3. Test loading: *"Read BRAIN.md and my projects/ folder. What am I working on?"* Test saving: *"Append a line to the Auth project's Log noting I rotated the key, and commit it."*
 
 ## ChatGPT
 
 1. **Settings → Connectors** (availability is plan-gated; may require developer mode). Add/authorize the **GitHub** connector for the brain repo.
-   - ChatGPT's GitHub connector is primarily **read/search** — great for loading and asking questions over the brain.
+   - ChatGPT's GitHub connector is primarily **read/search**, which is great for loading and asking questions over the brain.
    - For **writing** from ChatGPT, either grant a write-capable custom MCP connector, or have ChatGPT draft the note/edit and you commit it (from the terminal or GitHub's web editor).
 2. Paste the browser instructions block into a **Custom GPT** or the chat's custom instructions.
 3. Same load/save tests as above (expect saving to be the weaker side).

@@ -2,10 +2,10 @@
 
 Your vault ships with a `CLAUDE.md` that Claude Code reads automatically when working inside the vault directory. For other assistants, paste the block below into their equivalent slot:
 
-- **ChatGPT** — Settings → Personalization → Custom Instructions (or a Project's instructions)
-- **Claude Desktop / claude.ai** — Project instructions
-- **Cursor** — `.cursorrules` or Rules for AI
-- **Anything else** — the system prompt
+- **ChatGPT**: Settings → Personalization → Custom Instructions (or a Project's instructions)
+- **Claude Desktop / claude.ai**: Project instructions
+- **Cursor**: `.cursorrules` or Rules for AI
+- **Anything else**: the system prompt
 
 ```text
 I have a "second brain": a markdown knowledge vault you can access through
@@ -35,6 +35,6 @@ Use it as my external memory:
 4. Write vault content so I'll understand it in a year: complete
    sentences, context included, standalone.
 
-Don't ask permission for routine captures and logs — just do them and
+Don't ask permission for routine captures and logs; just do them and
 mention it briefly. Do ask before rewriting or archiving existing notes.
 ```
