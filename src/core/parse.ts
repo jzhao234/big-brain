@@ -13,7 +13,9 @@ import {
   uniq,
 } from "./util.js";
 
-const WIKILINK_RE = /\[\[([^\]|#\n]+)(?:#([^\]|\n]+))?(?:\|([^\]\n]+))?\]\]/g;
+// Inside a markdown table Obsidian escapes the alias pipe as `\|`, so the
+// separator may carry a backslash that belongs to neither target nor alias.
+const WIKILINK_RE = /\[\[([^\]|#\n]+?)(?:#([^\]|\n]+?))?(?:\\?\|([^\]\n]+))?\]\]/g;
 const TAG_RE = /(^|[\s(])#([A-Za-z][\w/-]*)/g;
 const HEADING_RE = /^(#{1,6})\s+(.*)$/;
 const TASK_RE = /^\s*[-*] \[([ xX/\-])\]\s+(.*)$/;

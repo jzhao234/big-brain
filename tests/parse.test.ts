@@ -30,6 +30,16 @@ describe("extractLinks", () => {
     expect(links[2]).toMatchObject({ target: "Baz", heading: "Section" });
   });
 
+  it("reads the table-escaped alias pipe as a separator", () => {
+    const links = extractLinks(
+      "| [[projects/Auth\\|Auth]] | [[Baz#Section\\|sec]] | [[C:\\dir]] |",
+    );
+    expect(links).toHaveLength(3);
+    expect(links[0]).toMatchObject({ target: "projects/Auth", alias: "Auth" });
+    expect(links[1]).toMatchObject({ target: "Baz", heading: "Section", alias: "sec" });
+    expect(links[2]).toMatchObject({ target: "C:\\dir", alias: undefined });
+  });
+
   it("ignores links inside code blocks and inline code", () => {
     const body = "```\n[[NotALink]]\n```\nand `[[AlsoNot]]` but [[Real]]";
     expect(extractLinks(body).map((l) => l.target)).toEqual(["Real"]);
