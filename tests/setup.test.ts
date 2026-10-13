@@ -7,6 +7,7 @@ import {
   type RunResult,
   type SetupDeps,
   classifyVault,
+  defaultSetupDeps,
   guiConfigSnippet,
   runSetup,
   vaultEnvLine,
@@ -364,19 +365,24 @@ describe("review fixes", () => {
 
   it("reports an existing registration that doesn't start or isn't user-scoped", () => {
     fakeBin("claude");
-    const get = (status: string, scope: string) => (cmd: string, args: string[]) =>
-      cmd === "claude" && args[1] === "get"
-        ? {
-            stdout: `big-brain:\n  Scope: ${scope}\n  Status: ${status}\n  Command: /old/node\n  Args: /old/index.js --vault /v\n`,
-          }
-        : freshMachine(cmd, args);
+    const get =
+      (status: string, scope: string, launch = "/old/node\n  Args: /old/index.js --vault /v") =>
+      (cmd: string, args: string[]) =>
+        cmd === "claude" && args[1] === "get"
+          ? {
+              stdout: `big-brain:\n  Scope: ${scope}\n  Status: ${status}\n  Command: ${launch}\n`,
+            }
+          : freshMachine(cmd, args);
     const broken = runSetup({ codex: false }, deps(get("✗ Failed to connect", "User config")));
     const step = broken.steps.find((s) => s.step === "Claude Code MCP");
     expect(step?.status).toBe("failed");
     expect(step?.detail).toContain("/old/node /old/index.js --vault /v");
     expect(step?.detail).toContain("claude mcp remove big-brain");
 
-    const local = runSetup({ codex: false }, deps(get("✔ Connected", "Local config")));
+    const local = runSetup(
+      { codex: false },
+      deps(get("✔ Connected", "Local config", `${process.execPath}\n  Args: --vault ${tmp}`)),
+    );
     const kept = local.steps.find((s) => s.step === "Claude Code MCP");
     expect(kept?.status).toBe("kept");
     expect(kept?.detail).toContain("not user-scoped");
@@ -391,5 +397,66 @@ describe("review fixes", () => {
     });
     expect(out).toBe(vault);
     expect(vaultEnvLine("C:\\it's", "win32")).toContain("'C:\\it''s'");
+  });
+});
+
+describe("second review fixes", () => {
+  it("shell-quotes the by-hand command shown after a failed registration", () => {
+    fakeBin("claude");
+    const vault = path.join(tmp, "notes-$(printf INJECTED)");
+    const result = runSetup(
+      { dir: vault, codex: false },
+      deps((cmd, args) =>
+        cmd === "claude" && args[1] === "add"
+          ? { status: 1, stderr: "boom" }
+          : freshMachine(cmd, args),
+      ),
+    );
+    const detail = result.steps.find((s) => s.step === "Claude Code MCP")?.detail ?? "";
+    const shown = detail.slice(detail.indexOf("To do it by hand: ") + "To do it by hand: ".length);
+    const lastArg = execFileSync(
+      "/bin/sh",
+      ["-c", `claude() { for a; do last=$a; done; printf %s "$last"; }; ${shown}`],
+      { encoding: "utf8" },
+    );
+    expect(lastArg).toBe(vault);
+  });
+
+  it("refuses a filesystem root even when the home folder is elsewhere", () => {
+    expect(() => classifyVault(path.parse(tmp).root, home)).toThrow(/filesystem root|home folder/);
+  });
+
+  it("refuses a Windows .cmd shim whose own path cmd.exe would expand", () => {
+    const shimDir = path.join(tmp, "%SETUP_TEST%");
+    fs.mkdirSync(shimDir);
+    const shim = path.join(shimDir, "claude.cmd");
+    fs.writeFileSync(shim, "@echo off\r\n");
+    fs.chmodSync(shim, 0o755);
+    const real = defaultSetupDeps(tmp);
+    real.platform = "win32";
+    real.env = { PATH: shimDir, PATHEXT: ".CMD" };
+    const r = real.run("claude", ["mcp", "get", "big-brain"]);
+    expect(r.status).toBeNull();
+    expect(r.stderr).toMatch(/cmd\.exe would change/);
+  });
+
+  it("flags a registration whose saved paths are gone, with no status line", () => {
+    fakeBin("codex");
+    const spaced = path.join(tmp, "My Vault");
+    fs.mkdirSync(spaced);
+    const get = (args: string) => (cmd: string, a: string[]) =>
+      cmd === "codex" && a[1] === "get"
+        ? { stdout: `big-brain\n  command: ${process.execPath}\n  args: ${args}\n` }
+        : freshMachine(cmd, a);
+    const stale = runSetup(
+      { claude: false },
+      deps(get("/missing/old/index.js --vault /missing/vault")),
+    );
+    const step = stale.steps.find((s) => s.step === "Codex MCP");
+    expect(step?.status).toBe("failed");
+    expect(step?.detail).toContain("missing: /missing/old/index.js, /missing/vault");
+
+    const fine = runSetup({ claude: false }, deps(get(`--vault ${spaced}`)));
+    expect(fine.steps.find((s) => s.step === "Codex MCP")?.status).toBe("kept");
   });
 });
