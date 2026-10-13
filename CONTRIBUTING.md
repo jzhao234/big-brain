@@ -15,7 +15,7 @@ Usually out of scope: a database or hosted service, features that need a paid AP
 
 ## Development setup
 
-Node 20 or newer.
+Node 20.19+ or 22.12+ (the test toolchain needs these; the published package itself runs on any Node 20).
 
 ```bash
 git clone https://github.com/jzhao234/big-brain.git
