@@ -71,8 +71,8 @@ export async function createEmbeddingProvider(
   } catch {
     throw new Error(
       "embeddings.enabled is true but @huggingface/transformers is not installed. " +
-        "Install it alongside big-brain (for a source checkout: " +
-        "`npm install --no-save --package-lock=false @huggingface/transformers@^3.8.1`), " +
+        "Install it alongside big-brain (global install: `npm install -g @huggingface/transformers@^3.8.1`; " +
+        "source checkout: `npm install --no-save --package-lock=false @huggingface/transformers@^3.8.1`), " +
         "or set embeddings.enabled to false.",
     );
   }

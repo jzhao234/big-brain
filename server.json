@@ -12,7 +12,7 @@
   "packages": [
     {
       "registryType": "npm",
-      "identifier": "big-brain",
+      "identifier": "@jzhao234/big-brain",
       "version": "0.3.0",
       "runtimeHint": "npx",
       "transport": {
