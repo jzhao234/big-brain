@@ -1,42 +1,56 @@
 # big-brain 🧠
 
-**A second brain for you *and* your AI assistants.** Plain-markdown notes, projects, and tasks — Obsidian-compatible, owned by you, readable and writable by any LLM through the [Model Context Protocol](https://modelcontextprotocol.io).
+[![npm](https://img.shields.io/npm/v/big-brain)](https://www.npmjs.com/package/big-brain)
+[![CI](https://github.com/jzhao234/big-brain/actions/workflows/ci.yml/badge.svg)](https://github.com/jzhao234/big-brain/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Your AI tools each keep their own memory of you, siloed and invisible. big-brain inverts that: **one knowledge vault you own, that every assistant reads and writes.** Claude Code, Claude Desktop, ChatGPT, Cursor — they all see the same projects, the same tasks, the same notes. Switch models freely; your context comes with you.
+**One memory for every AI assistant you use: your notes, projects, and tasks, kept as plain markdown you own.**
 
-- **Plain markdown files.** No database, no lock-in. Open the vault in Obsidian, grep it, put it in git.
-- **MCP server** with 23 tools: search, capture, daily logs, project and task management, link graph, related notes, vault health.
-- **CLI** for humans: `big-brain status`, `big-brain capture`, `big-brain tasks`.
-- **Claude Code skills** — `/brain`, `/capture`, `/weekly` — installed with one command.
-- **Projects as the unit of work** — each is one file with a goal, checkbox tasks, and a running log.
-- **Deterministic retrieval first**: full-text search (fuzzy, title-boosted), `[[wikilink]]` graph with backlinks, tags, frontmatter queries. No API keys, works offline.
-- **Optional local hybrid search**: flip `embeddings.enabled` and a small on-device model (via `@huggingface/transformers`) adds semantic matching, fused with full-text by Reciprocal Rank Fusion — paraphrases match, exact terms still count through the full-text half of the ranking, and nothing leaves your machine. Powers `related_notes` similarity too. See [docs/vault-spec.md](docs/vault-spec.md#search--embeddings-hybrid-retrieval).
-- **Optional git auto-commit + push** — flip a config flag and every note write, from any tool, commits only the note paths it touched and pushes automatically, so unrelated work is not swept in and your other machines stay in sync. Best-effort: a git failure never blocks a save (the note is saved, just not committed), and pushes run in the background so a slow network never delays one.
-- **Edits that don't damage notes.** Writes are atomic and locked per note, keep each note's line endings, don't land inside code blocks or frontmatter, refuse to rewrite frontmatter they can't parse, and refuse to write anywhere that resolves outside the vault (such as through a symlink). See [docs/vault-spec.md](docs/vault-spec.md#known-limits) for the edge cases these don't cover.
+Each AI tool keeps its own private memory of you, and none of them share it. big-brain flips that around. Point it at a folder of markdown (a new vault, or the Obsidian vault you already have) and Claude Code, Claude Desktop, Cursor, Codex, or any other [MCP](https://modelcontextprotocol.io) client can search it, read it, capture into it, and keep your projects and tasks current. Switch models whenever you like; your context comes with you.
 
-Requires Node 20+.
+<p align="center"><img src="docs/demo.svg" alt="Terminal demo: create a vault, capture a thought, start a project, add tasks, and print the overview" width="780"></p>
+
+## 60-second start
+
+```bash
+npm install -g big-brain
+big-brain init ~/brain          # or skip this and point --vault at your Obsidian vault
+claude mcp add --scope user big-brain -- big-brain-mcp --vault ~/brain
+```
+
+Then ask your assistant *"what am I working on?"* or *"capture: call the dentist on Friday"*. Other clients, and browser chats like claude.ai and ChatGPT, are covered in [Connect your AI tools](#connect-your-ai-tools).
+
+**Already use Obsidian?** big-brain reads an existing vault as is: no config file, no migration, and nothing is written until you ask for a change. Add a `brain.config.json` later to map your folder names (for example, `"folders": {"projects": "Projects"}`) so projects and the inbox land where you keep them. See [docs/vault-spec.md](docs/vault-spec.md).
+
+## What you get
+
+- **Plain markdown files.** No database and no lock-in. Open the vault in Obsidian, grep it, or put it in git.
+- **An MCP server with 23 tools:** search, capture, daily logs, projects, tasks, the link graph, related notes, and a vault health check.
+- **A CLI for humans:** `big-brain status`, `big-brain capture`, `big-brain tasks`, and more.
+- **Skills for Claude Code and Codex** (`/brain`, `/capture`, `/weekly`), installed with one command.
+- **Projects as the unit of work.** Each project is one file with a goal, checkbox tasks, and a running log.
+- **Deterministic retrieval first:** fuzzy full-text search with title boosting, `[[wikilink]]` backlinks, tags, and frontmatter filters. No API keys, and it works offline.
+- **Optional local semantic search.** Turn on `embeddings.enabled` and a small on-device model (via `@huggingface/transformers`) adds meaning-based matches, fused with full-text search by Reciprocal Rank Fusion. Paraphrases match, exact terms still count, and nothing leaves your machine. It also powers `related_notes`. See [docs/vault-spec.md](docs/vault-spec.md#search--embeddings-hybrid-retrieval).
+- **Optional git auto-commit and push.** With one config flag, every note write from any tool commits only the files it touched and pushes in the background, so your other machines stay in sync. A git failure never blocks a save: the note is saved, just not committed.
+- **Edits that don't damage notes.** Writes are atomic and locked per note, keep each note's line endings, never land inside code blocks or frontmatter, refuse to rewrite frontmatter they can't parse, and refuse to write anywhere that resolves outside the vault (such as through a symlink). [docs/vault-spec.md](docs/vault-spec.md#known-limits) lists the edge cases these don't cover.
+
+Requires Node 20 or newer. big-brain is pre-1.0: it's used daily, but minor versions may still change behavior; see the [changelog](CHANGELOG.md).
 
 ## Install
 
-big-brain isn't on npm yet, so install from source (one-time):
-
 ```bash
-git clone https://github.com/jzhao234/big-brain.git
-cd big-brain
-npm install
-npm run build
-npm link          # puts the CLI and both MCP server commands on your PATH
+npm install -g big-brain
 ```
 
-`npm link` skips `-g` install quirks and lets you `git pull && npm run build` to update later. (Once published, this becomes `npm i -g big-brain`.)
+That puts three commands on your PATH: `big-brain` (the CLI), `big-brain-mcp` (the MCP server over stdio), and `big-brain-mcp-http` (the remote preview below). To try it without installing, `npx big-brain status --vault ~/brain` works too.
 
-The default install keeps semantic-search native dependencies out of the base package. To enable local embeddings, install the opt-in runtime add-on alongside big-brain, then set `embeddings.enabled` to `true` in `brain.config.json`:
+The base install leaves out semantic search and its native dependencies. To enable local embeddings, install the add-on into the same place, then set `embeddings.enabled` to `true` in `brain.config.json`:
 
 ```bash
-npm install --no-save --package-lock=false @huggingface/transformers@^3.8.1
+npm install -g big-brain @huggingface/transformers@^3.8.1
 ```
 
-For a future global npm install, install both packages into the same global prefix: `npm i -g big-brain @huggingface/transformers@^3.8.1`.
+To work on big-brain itself, install from source instead: `git clone https://github.com/jzhao234/big-brain.git && cd big-brain && npm install && npm run build && npm link`. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Quickstart
 
@@ -51,7 +65,7 @@ Then connect an AI tool (below) and, optionally, seed the vault from your existi
 
 ## Connect your AI tools
 
-For local clients, run `big-brain-mcp`; the vault is chosen by `--vault <dir>` or the `BIG_BRAIN_VAULT` environment variable.
+For local clients, run `big-brain-mcp`. The vault is chosen by `--vault <dir>` or the `BIG_BRAIN_VAULT` environment variable.
 
 **Claude Code**
 
@@ -60,7 +74,7 @@ claude mcp add --scope user big-brain -- big-brain-mcp --vault ~/brain
 claude mcp list        # expect: big-brain ... ✔ Connected
 ```
 
-**Claude Desktop / Cursor / other MCP clients** — add to the MCP config (e.g. `claude_desktop_config.json`). Use an **absolute** command path: GUI apps are launched without your shell's `PATH`, so a bare `big-brain-mcp` may not resolve (run `which big-brain-mcp` to get it).
+**Claude Desktop / Cursor / other MCP clients:** add to the MCP config (e.g. `claude_desktop_config.json`). Use an **absolute** command path: GUI apps are launched without your shell's `PATH`, so a bare `big-brain-mcp` may not resolve (run `which big-brain-mcp` to get it).
 
 ```json
 {
@@ -73,9 +87,9 @@ claude mcp list        # expect: big-brain ... ✔ Connected
 }
 ```
 
-**Other local MCP clients** — any client that speaks MCP over stdio works the same way. For clients without MCP, the CLI's `--json` output makes the vault scriptable.
+**Other local MCP clients:** any client that speaks MCP over stdio works the same way. For clients without MCP, the CLI's `--json` output makes the vault scriptable.
 
-**Remote MCP preview** — Big Brain can expose the same 23 tools through an authenticated Streamable HTTP endpoint:
+**Remote MCP preview:** Big Brain can expose the same 23 tools through an authenticated Streamable HTTP endpoint:
 
 ```bash
 export BIG_BRAIN_MCP_TOKEN="$(openssl rand -hex 32)"
@@ -83,17 +97,17 @@ big-brain mcp-http --vault ~/brain
 # endpoint: http://127.0.0.1:3333/mcp
 ```
 
-It binds to localhost by default and checks `Authorization: Bearer <token>` before parsing JSON. Bodies are capped at 1 MB (larger requests get HTTP 413 with a JSON-RPC error). Requests without `Origin` are allowed; requests with one require an exact match in `--allowed-origins` / `BIG_BRAIN_MCP_ALLOWED_ORIGINS`, which defaults to empty and refuses browser origins. Keep it behind an HTTPS reverse proxy or secure tunnel; never expose the plain HTTP listener directly. The static token is the first self-hosted transport milestone, not an OAuth implementation—browser connectors that require OAuth still need an OAuth-capable gateway. See [docs/mcp-setup.md](docs/mcp-setup.md#remote-streamable-http-preview).
+It binds to localhost by default and checks `Authorization: Bearer <token>` before parsing JSON. Bodies are capped at 1 MB (larger requests get HTTP 413 with a JSON-RPC error). Requests without `Origin` are allowed; requests with one require an exact match in `--allowed-origins` / `BIG_BRAIN_MCP_ALLOWED_ORIGINS`, which defaults to empty and refuses browser origins. Keep it behind an HTTPS reverse proxy or secure tunnel; never expose the plain HTTP listener directly. The static token is the first self-hosted transport milestone, not an OAuth implementation, so browser connectors that require OAuth still need an OAuth-capable gateway. See [docs/mcp-setup.md](docs/mcp-setup.md#remote-streamable-http-preview).
 
-**Browser fallback (claude.ai / ChatGPT)** — the zero-infrastructure option is to connect the AI to your vault's **GitHub repo** so it can read the markdown directly, and write it where the connector allows (some GitHub connectors are read-only; you also lose the computed overview/search/task tools, since it's raw file access). See [docs/browser-github-connector.md](docs/browser-github-connector.md) and paste [prompts/browser-github-instructions.md](prompts/browser-github-instructions.md).
+**Browser fallback (claude.ai / ChatGPT):** the zero-infrastructure option is to connect the AI to your vault's **GitHub repo** so it can read the markdown directly, and write it where the connector allows (some GitHub connectors are read-only; you also lose the computed overview/search/task tools, since it's raw file access). See [docs/browser-github-connector.md](docs/browser-github-connector.md) and paste [prompts/browser-github-instructions.md](prompts/browser-github-instructions.md).
 
 Then teach the assistant how to use the vault: Claude Code reads the vault's `CLAUDE.md` automatically when you work inside the vault folder; elsewhere, and for other tools, paste [`prompts/agent-instructions.md`](prompts/agent-instructions.md) into their custom instructions.
 
 ## Using it: load and save
 
-The whole point is that you never re-feed context. The assistant **loads** a small, relevant slice on demand and **saves** small pieces as you work — you just talk to it.
+The whole point is that you never re-feed context. The assistant **loads** a small, relevant slice on demand and **saves** small pieces as you work. You just talk to it.
 
-**Load** — orient at the start, pull details as needed:
+**Load:** orient at the start, pull details as needed:
 
 | You want to… | In Claude Code | CLI |
 | --- | --- | --- |
@@ -103,7 +117,7 @@ The whole point is that you never re-feed context. The assistant **loads** a sma
 | See tasks / projects | *"what's due?"* | `big-brain tasks`, `big-brain projects` |
 | Pull surrounding context | *"what's related to X?"* | `big-brain related X` |
 
-**Save** — as decisions, progress, and ideas happen (append-first; never destructive):
+**Save** as decisions, progress, and ideas happen (append-first; never destructive):
 
 | You want to… | In Claude Code | CLI |
 | --- | --- | --- |
@@ -116,21 +130,21 @@ The whole point is that you never re-feed context. The assistant **loads** a sma
 | Change metadata | *"set Auth's due date to …"* | `big-brain frontmatter "Auth" due=2026-11-01` |
 | Retire a note | *"archive that note"* | `big-brain archive "Auth"` |
 
-**Review** — `/weekly` runs a guided pass: triage the inbox, prune projects, reschedule overdue tasks, fix broken links, and **consolidate** — `big-brain doctor` flags bloated notes and near-duplicates, and the review proposes splits/merges/stale-fact pruning for your approval. Capture and search keep a brain useful; consolidation keeps it trustworthy.
+**Review:** `/weekly` runs a guided pass: triage the inbox, prune projects, reschedule overdue tasks, fix broken links, and **consolidate**: `big-brain doctor` flags bloated notes and near-duplicates, and the review proposes splits/merges/stale-fact pruning for your approval. Capture and search keep a brain useful; consolidation keeps it trustworthy.
 
 ## Skills
 
 Three skills wrap the tools into commands, for Claude Code (`/brain`) and Codex (`$brain`):
 
-- **`brain`** — load the overview and switch into brain-aware mode for the session
-- **`capture`** — zero-friction capture to the inbox
-- **`weekly`** — a guided weekly review
+- **`brain`:** load the overview and switch into brain-aware mode for the session
+- **`capture`:** zero-friction capture to the inbox
+- **`weekly`:** a guided weekly review
 
-`big-brain agents install claude codex` installs them for both agents (see below). `big-brain install-skills` still copies the Claude versions into `~/.claude/skills` (`--force` overwrites). They're path-agnostic — they call the `big-brain` CLI / MCP tools and resolve the vault from `BIG_BRAIN_VAULT` (or `--vault`), so the same skill works on every machine.
+`big-brain agents install claude codex` installs them for both agents (see below). `big-brain install-skills` still copies the Claude versions into `~/.claude/skills` (`--force` overwrites). They're path-agnostic: they call the `big-brain` CLI / MCP tools and resolve the vault from `BIG_BRAIN_VAULT` (or `--vault`), so the same skill works on every machine.
 
 ## Agent profiles: your agent setup in the vault
 
-Your coding agents' personal setup — skills, global instructions, hooks, the status line, a few settings — can live in the vault too, so every machine gets the same setup from one command and a change made on one machine reaches the others through git.
+Your coding agents' personal setup (skills, global instructions, hooks, the status line, a few settings) can live in the vault too, so every machine gets the same setup from one command and a change made on one machine reaches the others through git.
 
 ```
 agents/claude/instructions.md   -> ~/.claude/CLAUDE.md
@@ -152,7 +166,7 @@ big-brain agents save codex skills/my-skill --setting tui.status_line
 
 How it stays safe:
 
-- **Links, not copies.** Edit a skill or script in the vault (or through the link) and every machine has it after `git pull`. Everything else in `~/.claude` / `~/.codex` — other skills, history, credentials — is never touched.
+- **Links, not copies.** Edit a skill or script in the vault (or through the link) and every machine has it after `git pull`. Everything else in `~/.claude` / `~/.codex` (other skills, history, credentials) is never touched.
 - **Nothing unmanaged is replaced unless you say so.** A file in the way is reported; `--replace` moves it to a timestamped backup under `~/.local/state/big-brain/backups` (outside every agent folder, so a backed-up skill is never picked up) with a restore manifest, then links the vault's.
 - **Settings merge three ways.** big-brain remembers what it applied on each machine: a value you edited locally is reported, not overwritten (`--replace` takes the vault's); a value you never touched follows the vault; a key dropped from the vault is removed only if it wasn't edited. Claude hooks are matched by event, matcher, and command, so changing a timeout updates the hook instead of registering it twice. TOML is edited line by line (comments, trust entries and hook hashes stay put), and any edit that would change more than the managed keys is refused.
 - **Plan first, then write, and roll back on failure.** Every link and settings change is validated before the first write; a refusal leaves the machine untouched, and if a step still fails midway the steps already done are undone (if even that fails, nothing is deleted and the error says where the originals are). Nothing is written through a symlinked folder, and a settings file kept as a symlink (e.g. in a dotfiles repo) stays a symlink. `--prune` removes links whose vault file was deleted.
@@ -165,8 +179,8 @@ How it stays safe:
 
 The vault is a git repo, so this is just git: **clone it on each machine, and each machine runs its own `big-brain-mcp` against its own clone.** Git keeps them in sync.
 
-- **Write side — automatic.** Set `git.autoCommit` (and `git.autoPush`) in `brain.config.json` and every note write — from any tool, any machine — is committed and pushed (best-effort). See [docs/vault-spec.md](docs/vault-spec.md#auto-commit).
-- **Read side — pull before you start.** Add a `SessionStart` hook so a session always opens on the latest:
+- **Write side: automatic.** Set `git.autoCommit` (and `git.autoPush`) in `brain.config.json` and every note write, from any tool on any machine, is committed and pushed (best-effort). See [docs/vault-spec.md](docs/vault-spec.md#auto-commit).
+- **Read side: pull before you start.** Add a `SessionStart` hook so a session always opens on the latest:
 
   ```json
   // ~/.claude/settings.json
@@ -180,17 +194,17 @@ On a fresh machine: install big-brain (above), `git clone` your vault, `big-brai
 
 ## Seed it from your existing AI history
 
-An empty brain is useless; the fastest way to a useful one is extracting what your LLMs **already know about you**. Every assistant you've used heavily — ChatGPT, Claude, Gemini — has months of context about your projects, preferences, and goals sitting in its memory and chat history. Seeding pulls that out, once, into files you own.
+An empty brain is useless; the fastest way to a useful one is extracting what your LLMs **already know about you**. Every assistant you've used heavily (ChatGPT, Claude, Gemini) has months of context about your projects, preferences, and goals sitting in its memory and chat history. Seeding pulls that out, once, into files you own.
 
-**1. Run the seed interview in each LLM you use.** Copy the prompt from [`prompts/seed-interview.md`](prompts/seed-interview.md) into each assistant — ideally the account with the most history, with memory/personalization enabled. It's a structured export interview: profile, current projects, stack, how you like to work with AI, goals, people, routines, standing constraints, open loops, and blind spots. It instructs the model to be concrete, mark inferences `(inferred)`, and write "No data" instead of inventing — so the output is honest enough to build on.
+**1. Run the seed interview in each LLM you use.** Copy the prompt from [`prompts/seed-interview.md`](prompts/seed-interview.md) into each assistant, ideally the account with the most history, with memory/personalization enabled. It's a structured export interview: profile, current projects, stack, how you like to work with AI, goals, people, routines, standing constraints, open loops, and blind spots. It instructs the model to be concrete, mark inferences `(inferred)`, and write "No data" instead of inventing, so the output is honest enough to build on.
 
-**2. Save each output into the vault's `inbox/`** as one file per model (`inbox/seed-chatgpt.md`, `inbox/seed-claude.md`, …). Don't organize anything yet — capture first is the whole inbox philosophy.
+**2. Save each output into the vault's `inbox/`** as one file per model (`inbox/seed-chatgpt.md`, `inbox/seed-claude.md`, …). Don't organize anything yet: capture first is the whole inbox philosophy.
 
-**3. Triage.** Ask a vault-connected assistant to run the **`process-inbox`** MCP prompt (or just say *"triage my inbox"* / run `/weekly` in Claude Code). It merges duplicates across models — different LLMs know different slices of you, and they mostly complement rather than conflict — then turns the material into real structure: projects with tasks for everything in flight, `people/` notes, a preferences note your agent instructions can point at, reference notes for your stack/setup, and open loops as tasks. You confirm per item; raw exports can be kept in `archive/` for provenance.
+**3. Triage.** Ask a vault-connected assistant to run the **`process-inbox`** MCP prompt (or just say *"triage my inbox"* / run `/weekly` in Claude Code). It merges duplicates across models (different LLMs know different slices of you, and they mostly complement rather than conflict), then turns the material into real structure: projects with tasks for everything in flight, `people/` notes, a preferences note your agent instructions can point at, reference notes for your stack/setup, and open loops as tasks. You confirm per item; raw exports can be kept in `archive/` for provenance.
 
-**4. Repeat occasionally.** Models keep accumulating context about you — re-running the interview every few months and triaging the diff keeps the vault ahead of any one provider's memory.
+**4. Repeat occasionally.** Models keep accumulating context about you; re-running the interview every few months and triaging the diff keeps the vault ahead of any one provider's memory.
 
-Two more seeding paths worth knowing: if you already keep an **Obsidian vault**, big-brain can adopt it in place (add a `brain.config.json`, map your folder names via the `folders` config — see [docs/vault-spec.md](docs/vault-spec.md)); and a **work session with a vault-connected agent seeds as a side effect** — the agent instructions tell it to create projects and capture facts as you work, so the brain fills in from real activity even if you skip the interview.
+Two more seeding paths worth knowing: if you already keep an **Obsidian vault**, big-brain can adopt it in place (add a `brain.config.json`, map your folder names via the `folders` config; see [docs/vault-spec.md](docs/vault-spec.md)); and a **work session with a vault-connected agent seeds as a side effect**: the agent instructions tell it to create projects and capture facts as you work, so the brain fills in from real activity even if you skip the interview.
 
 ## The vault
 
@@ -254,15 +268,21 @@ big-brain install-skills        add Claude Code skills  big-brain mcp   run the 
 
 1. **Files over databases.** Markdown you can read in 30 years beats any app.
 2. **The human owns the vault; agents are guests.** Agents append and capture freely, but rewriting and archiving are deliberate acts.
-3. **Deterministic beats clever.** Search + links + tags retrieves reliably and works offline; the semantic layer is opt-in, fully local, and *fused with* — never a replacement for — exact search.
-4. **Model-agnostic by construction.** Everything goes through MCP or the filesystem — nothing assumes a particular AI vendor.
+3. **Deterministic beats clever.** Search + links + tags retrieves reliably and works offline; the semantic layer is opt-in, fully local, and *fused with* exact search, never a replacement for it.
+4. **Model-agnostic by construction.** Everything goes through MCP or the filesystem; nothing assumes a particular AI vendor.
 
-## Development
+## Contributing and support
+
+Bug reports and focused pull requests are welcome; read [CONTRIBUTING.md](CONTRIBUTING.md) first, since it explains what's in scope. Report security problems privately as described in [SECURITY.md](SECURITY.md), not in a public issue.
 
 ```bash
 npm install
 npm run typecheck && npm run lint && npm test
 npm run build
 ```
+
+## Follow along
+
+big-brain is a side project, built in the open. If it's useful to you, a star helps other people find it. To hear about new releases and whatever I build next, use **Watch → Custom → Releases** on this repo, or follow [@jzhao234](https://github.com/jzhao234) on GitHub.
 
 MIT © Junhao Zhao
