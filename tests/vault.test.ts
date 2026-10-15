@@ -591,6 +591,22 @@ describe("write paths stay inside a visible vault", () => {
     expect(fs.readFileSync(path.join(dir, "notes", name), "utf8")).toBe("# Long\n\nmore\n");
   });
 
+  it.skipIf(process.platform === "win32")("scans a folder with a symlink back to the vault", () => {
+    vault.createNote({ title: "Keeper" });
+    fs.symlinkSync(dir, path.join(dir, "notes", "loop"));
+    vault.refresh();
+    expect(vault.get("notes/Keeper.md")).toBeDefined();
+  });
+
+  it("hides a folder named by an ignore pattern with a trailing slash", () => {
+    const configPath = path.join(dir, "brain.config.json");
+    const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    fs.writeFileSync(configPath, JSON.stringify({ ...config, ignore: ["private/"] }));
+    fs.mkdirSync(path.join(dir, "private"));
+    fs.writeFileSync(path.join(dir, "private", "Secret.md"), "# Secret\n");
+    expect(new Vault(dir).get("private/Secret.md")).toBeUndefined();
+  });
+
   it("skips a note deleted between the scan and the read", () => {
     vault.createNote({ title: "Keeper" });
     fs.writeFileSync(path.join(dir, "notes", "Gone.md"), "# Gone\n");

@@ -261,4 +261,12 @@ describe("frontmatter boundaries", () => {
     expect(parse("notes/A.md", noKeys).frontmatter).toEqual({});
     expect(parse("notes/A.md", noKeys).body).toBe(`${body}\n`);
   });
+
+  it("writes the same layout gray-matter did, so existing notes don't churn", () => {
+    expect(stringifyNote("body", { status: "active" })).toBe("---\nstatus: active\n---\nbody\n");
+    expect(stringifyNote("body\n", { status: "active" })).toBe("---\nstatus: active\n---\nbody\n");
+    expect(stringifyNote("", { a: 1 })).toBe("---\na: 1\n---\n\n");
+    expect(stringifyNote("body", {})).toBe("body\n");
+    expect(stringifyNote("x", { m: "two\nlines\n" })).toBe("---\nm: |\n  two\n  lines\n---\nx\n");
+  });
 });

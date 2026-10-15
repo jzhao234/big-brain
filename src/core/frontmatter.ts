@@ -1,4 +1,3 @@
-import matter from "gray-matter";
 import yaml from "js-yaml";
 
 /**
@@ -29,8 +28,6 @@ const yamlEngine = {
   stringify: (data: object): string => yaml.dump(data, { schema: SCHEMA }),
 };
 
-const OPTIONS = { engines: { yaml: yamlEngine } };
-
 export interface ParsedFrontmatter {
   data: Record<string, unknown>;
   content: string;
@@ -42,7 +39,7 @@ const DELIMITER_RE = /^---[ \t]*\r?$/;
  * Locate a frontmatter block: the YAML between a first line of `---` (after
  * an optional BOM) and the next line that is exactly `---`, and the offset
  * where the body starts. Undefined when the file has none. Unlike
- * gray-matter, which this replaces for parsing, a delimiter must be a whole
+ * gray-matter, which this replaced, a delimiter must be a whole
  * line (`----`, `---yaml`, and `--- text` are not delimiters, so a closing
  * line with text after it can't start the body mid-line), and an opener with
  * no closing line is not frontmatter: a note that merely begins with a `---`
@@ -87,11 +84,18 @@ export function parseFrontmatter(raw: string): ParsedFrontmatter {
   return { data, content: raw.slice(block.end) };
 }
 
+function withNewline(text: string): string {
+  return text.endsWith("\n") ? text : `${text}\n`;
+}
+
 /** Serialize a body and frontmatter data back into a markdown file. */
 export function stringifyNote(body: string, data: Record<string, unknown>): string {
-  // A string would be re-parsed for frontmatter first, so a body that itself
-  // opens with `---` lost its first section; a file object is taken as is.
-  const out = matter.stringify({ content: body }, data, OPTIONS);
+  // Same layout gray-matter wrote, so existing notes don't churn: the YAML
+  // between `---` lines (no block when there are no keys), then the body
+  // with a final newline added when it lacks one.
+  const yamlText = yamlEngine.stringify(data).trim();
+  const block = yamlText === "{}" ? "" : `---\n${yamlText}\n---\n`;
+  const out = block + withNewline(body);
   // With no keys, no block is written; keep an empty one when the body would
   // otherwise read back as frontmatter.
   return Object.keys(data).length === 0 && frontmatterEnd(out) !== undefined

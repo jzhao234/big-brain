@@ -1,6 +1,6 @@
 {
   "name": "@jzhao234/big-brain",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "A plain-markdown second brain for you and your AI assistants: an Obsidian-compatible vault, MCP server, and CLI for notes, projects, and tasks.",
   "keywords": [
     "second-brain",
@@ -61,12 +61,11 @@
     "@modelcontextprotocol/sdk": "^1.30.0",
     "commander": "^13.1.0",
     "express": "^5.2.1",
-    "fast-glob": "^3.3.3",
-    "gray-matter": "^4.0.3",
     "js-yaml": "^4.3.2",
     "minisearch": "^7.1.2",
     "picocolors": "^1.1.1",
     "smol-toml": "^1.9.1",
+    "tinyglobby": "^0.2.17",
     "zod": "^3.24.0"
   },
   "devDependencies": {
