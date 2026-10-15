@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import fg from "fast-glob";
+import { globSync } from "tinyglobby";
 import { folderTypeMap, loadConfig } from "./config.js";
 import { stringifyNote } from "./frontmatter.js";
 import { autoCommit } from "./git.js";
@@ -49,7 +49,7 @@ export class Vault {
 
   /** Rescan the vault, reparsing only files whose stat signature changed. */
   refresh(): void {
-    const files = fg.sync("**/*.md", {
+    const files = globSync("**/*.md", {
       cwd: this.dir,
       ignore: [
         "node_modules/**",

@@ -4,6 +4,17 @@ All notable changes to big-brain. The format follows [Keep a Changelog](https://
 
 ## Unreleased
 
+## 0.3.2 (2026-10-14)
+
+### Fixed
+
+- `npm audit` reports no vulnerabilities in the installed package. `fast-glob` (which pulled in `micromatch` and `braces`) is replaced by `tinyglobby`, and `gray-matter` (which pulled in an old `js-yaml`, `argparse`, and `sprintf-js`) is no longer used; notes are written byte for byte as before.
+- A vault containing a symlink back to one of its own folders no longer runs out of memory while scanning.
+
+### Changed
+
+- An `ignore` pattern ending in a slash (`"private/"`) now hides that folder; before, it matched nothing.
+
 ## 0.3.1 (2026-10-13)
 
 ### Added
