@@ -7,6 +7,7 @@
  *   agents/<name>/skills/<skill>/   -> one link per skill directory
  *   agents/<name>/files/**          -> one link per file (status line, hooks…)
  *   agents/<name>/<settings file>   -> fragment merged into the agent's settings
+ *                                      (for agents whose settings big-brain manages)
  *
  * Safety rules: nothing unmanaged is replaced unless asked (`replace`), and
  * then it is moved to a backup outside every agent folder; every change is
@@ -30,8 +31,8 @@ export interface AgentDef {
   /** Vault folder name and CLI argument. */
   name: string;
   label: string;
-  /** Environment variable that overrides the agent's home directory. */
-  homeEnv: string;
+  /** Environment variable that overrides the agent's home directory, if the agent has one. */
+  homeEnv?: string;
   /** Home directory relative to the user's home when homeEnv is unset. */
   defaultHome: string;
   /** Global instructions file inside the home. */
@@ -40,8 +41,11 @@ export interface AgentDef {
   instructionsOverride?: string;
   /** Skill root inside the home. */
   skillsDir: string;
-  /** Settings file inside the home; the vault fragment uses the same name. */
-  settingsFile: string;
+  /**
+   * Settings file inside the home; the vault fragment uses the same name.
+   * Absent when big-brain manages no settings for the agent.
+   */
+  settingsFile?: string;
   format: SettingsFormat;
   /** Whether hook registrations in the fragment are managed for this agent. */
   managesHooks: boolean;
@@ -75,6 +79,19 @@ export const AGENTS: readonly AgentDef[] = [
     // Codex hooks need a per-machine trust review; registrations stay local.
     managesHooks: false,
     reserved: ["config.toml", "auth.json", "hooks.json"],
+  },
+  {
+    name: "agy",
+    label: "Antigravity",
+    // agy has no variable that moves this folder, its global customization root.
+    defaultHome: path.join(".gemini", "config"),
+    instructionsFile: "AGENTS.md",
+    skillsDir: "skills",
+    // agy keeps its settings outside this folder (~/.gemini/antigravity-cli),
+    // so no settings are managed for it.
+    format: "json",
+    managesHooks: false,
+    reserved: ["mcp_config.json", "config.json"],
   },
 ];
 
@@ -136,7 +153,8 @@ export function agentPaths(
   agent: AgentDef,
   sys: SystemEnv = defaultSystem(),
 ): AgentPaths {
-  const home = canonicalPath(sys.env[agent.homeEnv] || path.join(sys.userHome, agent.defaultHome));
+  const override = agent.homeEnv ? sys.env[agent.homeEnv] : undefined;
+  const home = canonicalPath(override || path.join(sys.userHome, agent.defaultHome));
   const vault = canonicalPath(vaultDir);
   const stateRoot = path.join(
     sys.env.XDG_STATE_HOME || path.join(sys.userHome, ".local", "state"),
@@ -995,7 +1013,8 @@ export interface InstallReport {
   paths: AgentPaths;
   links: LinkPlan[];
   settings: SettingPlan[];
-  settingsFile: string;
+  /** The agent's settings file, or null when big-brain manages none for it. */
+  settingsFile: string | null;
   settingsChanged: boolean;
   stale: string[];
   pruned: string[];
@@ -1007,32 +1026,44 @@ export interface InstallReport {
 export function planInstall(p: AgentPaths, opts: InstallOptions = {}) {
   const entries = collectEntries(p);
   const links = entries.map((e) => planLink(p, e, Boolean(opts.replace)));
+  const state = readState(p);
+  const settings = p.agent.settingsFile
+    ? planSettingsFile(p, p.agent.settingsFile, state, Boolean(opts.replace))
+    : {
+        settings: [],
+        settingsFile: null,
+        settingsWrite: null,
+        settingsText: "",
+        newSettingsText: null,
+      };
 
-  const fragmentFile = path.join(p.profile, p.agent.settingsFile);
+  const linkedNow = new Set(entries.filter((e) => e.kind !== "bundled-skill").map((e) => e.rel));
+  const stale = state.links.filter((rel) => isStaleLink(p, rel, linkedNow));
+  return { entries, links, ...settings, stale, state };
+}
+
+/** Three-way plan for the agent's settings file against the vault fragment of the same name. */
+function planSettingsFile(p: AgentPaths, rel: string, state: AgentState, replace: boolean) {
+  const fragmentFile = path.join(p.profile, rel);
   if (fs.lstatSync(fragmentFile, { throwIfNoEntry: false })?.isSymbolicLink()) {
-    throw new Error(`Symlinks are not allowed in an agent profile: ${p.agent.settingsFile}`);
+    throw new Error(`Symlinks are not allowed in an agent profile: ${rel}`);
   }
   const fragmentText = readText(fragmentFile);
   const wanted =
     fragmentText === null
       ? new Map<string, Json>()
       : fragmentLeaves(
-          parseSettings(
-            fragmentText,
-            p.agent.format,
-            `vault ${p.agent.name}/${p.agent.settingsFile}`,
-          ),
+          parseSettings(fragmentText, p.agent.format, `vault ${p.agent.name}/${rel}`),
           p.agent,
         );
 
-  const settingsFile = path.join(p.home, p.agent.settingsFile);
+  const settingsFile = path.join(p.home, rel);
   // A settings file kept in a dotfiles repo is often a symlink: read and write
   // the file it points to, so the link itself is never replaced.
   const settingsWrite = settingsTarget(settingsFile);
   const settingsText = readText(settingsWrite) ?? "";
   const current = parseSettings(settingsText, p.agent.format, settingsFile);
-  const state = readState(p);
-  const settings = planSettings(current, wanted, state.settings, Boolean(opts.replace));
+  const settings = planSettings(current, wanted, state.settings, replace);
   const changes = settings.filter((s) => ["add", "update", "remove"].includes(s.action));
   let newSettingsText: string | null = null;
   if (changes.length > 0) {
@@ -1041,20 +1072,7 @@ export function planInstall(p: AgentPaths, opts: InstallOptions = {}) {
         ? `${JSON.stringify(applySettingPlans(current, settings), null, 2)}\n`
         : editToml(settingsText, settings);
   }
-
-  const linkedNow = new Set(entries.filter((e) => e.kind !== "bundled-skill").map((e) => e.rel));
-  const stale = state.links.filter((rel) => isStaleLink(p, rel, linkedNow));
-  return {
-    entries,
-    links,
-    settings,
-    settingsFile,
-    settingsWrite,
-    settingsText,
-    newSettingsText,
-    stale,
-    state,
-  };
+  return { settings, settingsFile, settingsWrite, settingsText, newSettingsText };
 }
 
 /** A link from an earlier install whose vault source is gone, reachable without leaving the home. */
@@ -1125,18 +1143,18 @@ export function installAgent(p: AgentPaths, opts: InstallOptions = {}): InstallR
       }
     }
 
-    if (plan.newSettingsText !== null) {
+    const { settingsWrite, newSettingsText } = plan;
+    const settingsRel = p.agent.settingsFile;
+    if (settingsRel && settingsWrite !== null && newSettingsText !== null) {
       // Refuse if the settings changed while we were planning.
-      if ((readText(plan.settingsWrite) ?? "") !== plan.settingsText) {
+      if ((readText(settingsWrite) ?? "") !== plan.settingsText) {
         throw new Error(`${plan.settingsFile} changed during install; run it again`);
       }
-      const existed = fs.existsSync(plan.settingsWrite);
-      if (existed) backup.take(p.agent.settingsFile, "copy");
-      atomicWrite(plan.settingsWrite, plan.newSettingsText);
+      const existed = fs.existsSync(settingsWrite);
+      if (existed) backup.take(settingsRel, "copy");
+      atomicWrite(settingsWrite, newSettingsText);
       undo.push(() =>
-        existed
-          ? atomicWrite(plan.settingsWrite, plan.settingsText)
-          : fs.unlinkSync(plan.settingsWrite),
+        existed ? atomicWrite(settingsWrite, plan.settingsText) : fs.unlinkSync(settingsWrite),
       );
     }
 
@@ -1287,6 +1305,12 @@ export function saveToProfile(
   const result: SaveResult = { saved: [], settings: [], touched: [], backupDir: null };
 
   // Validate everything before changing anything.
+  const settingsRel = p.agent.settingsFile;
+  if (settingKeys.length > 0 && !settingsRel) {
+    throw new Error(
+      `big-brain manages no settings for ${p.agent.label}, so it can't save a setting`,
+    );
+  }
   const wanted = [...new Set(rels.map(normalizeRel))].sort();
   for (let i = 0; i < wanted.length; i++) {
     for (let j = i + 1; j < wanted.length; j++) {
@@ -1326,21 +1350,22 @@ export function saveToProfile(
   // Settings: copy each key's current value into the fragment, and record it
   // as applied in exactly the leaf form install uses, so the next install
   // sees it as already in place (never as something to remove).
-  const fragmentFile = path.join(p.profile, p.agent.settingsFile);
+  let fragmentFile: string | null = null;
   let fragmentText: string | null = null;
   const savedLeaves = new Map<string, Json>();
   const retired = new Set<string>();
-  if (settingKeys.length > 0) {
+  if (settingKeys.length > 0 && settingsRel) {
+    fragmentFile = path.join(p.profile, settingsRel);
     const current = parseSettings(
-      readText(settingsTarget(path.join(p.home, p.agent.settingsFile))) ?? "",
+      readText(settingsTarget(path.join(p.home, settingsRel))) ?? "",
       p.agent.format,
-      p.agent.settingsFile,
+      settingsRel,
     );
     if (fs.lstatSync(fragmentFile, { throwIfNoEntry: false })?.isSymbolicLink()) {
-      throw new Error(`Symlinks are not allowed in an agent profile: ${p.agent.settingsFile}`);
+      throw new Error(`Symlinks are not allowed in an agent profile: ${settingsRel}`);
     }
     const oldText = readText(fragmentFile) ?? "";
-    const fragment = parseSettings(oldText, p.agent.format, `vault ${p.agent.settingsFile}`);
+    const fragment = parseSettings(oldText, p.agent.format, `vault ${settingsRel}`);
     const added: Record<string, Json> = {};
     for (const key of settingKeys) {
       const keyPath = key.split(".").filter(Boolean);
@@ -1349,7 +1374,7 @@ export function saveToProfile(
         throw new Error("Hooks are not saved by key; add them to the vault fragment by hand");
       }
       const value = getAt(current, { kind: "key", path: keyPath });
-      if (value === undefined) throw new Error(`${key} is not set in ${p.agent.settingsFile}`);
+      if (value === undefined) throw new Error(`${key} is not set in ${settingsRel}`);
       setAt(added, { kind: "key", path: keyPath }, clone(value));
       result.settings.push({ key, value });
     }
@@ -1385,7 +1410,7 @@ export function saveToProfile(
       const emptied = isPlainObject(s.value) && Object.keys(s.value).length === 0;
       if (!(deepEqual(got, s.value) || (emptied && (got === undefined || deepEqual(got, {}))))) {
         throw new Error(
-          `Could not save ${s.key} exactly; edit ${p.agent.settingsFile} in the vault by hand`,
+          `Could not save ${s.key} exactly; edit ${settingsRel} in the vault by hand`,
         );
       }
     }
@@ -1428,14 +1453,15 @@ export function saveToProfile(
       result.touched.push(toRel(path.relative(p.vault, job.target)));
       if (!state.links.includes(job.rel)) state.links.push(job.rel);
     }
-    if (fragmentText !== null) {
-      checkVaultParents(p.vault, fragmentFile);
-      const oldFragment = readText(fragmentFile);
-      atomicWrite(fragmentFile, fragmentText);
+    if (fragmentFile !== null && fragmentText !== null) {
+      const file = fragmentFile;
+      checkVaultParents(p.vault, file);
+      const oldFragment = readText(file);
+      atomicWrite(file, fragmentText);
       undo.push(() =>
-        oldFragment === null ? fs.unlinkSync(fragmentFile) : atomicWrite(fragmentFile, oldFragment),
+        oldFragment === null ? fs.unlinkSync(file) : atomicWrite(file, oldFragment),
       );
-      result.touched.push(toRel(path.relative(p.vault, fragmentFile)));
+      result.touched.push(toRel(path.relative(p.vault, file)));
       for (const id of retired) delete state.settings[id];
       for (const [id, value] of savedLeaves) state.settings[id] = clone(value);
     }

@@ -22,7 +22,7 @@ let root: string;
 let userHome: string;
 let vaultDir: string;
 
-function paths(agent: "claude" | "codex", env: Record<string, string> = {}): AgentPaths {
+function paths(agent: "claude" | "codex" | "agy", env: Record<string, string> = {}): AgentPaths {
   return agentPaths(vaultDir, "agents", getAgent(agent), {
     userHome,
     env: { XDG_STATE_HOME: path.join(root, "state"), ...env },
@@ -41,7 +41,7 @@ function profile(agent: string, rel: string, text: string, mode?: number): strin
   return file;
 }
 
-function home(agent: "claude" | "codex"): string {
+function home(agent: "claude" | "codex" | "agy"): string {
   return paths(agent).home;
 }
 
@@ -524,6 +524,41 @@ describe("status and the vault scanner", () => {
     fs.writeFileSync(cfgFile, JSON.stringify({ ...cfg, folders: { agents: "setup/agents" } }));
     write(path.join(vaultDir, "setup/agents/claude/instructions.md"), "# rules");
     expect(new Vault(vaultDir).notes(true).some((n) => n.path.startsWith("setup/"))).toBe(false);
+  });
+});
+
+describe("Antigravity (agy) profile", () => {
+  it("links into ~/.gemini/config, copies the bundled skills, and manages no settings", () => {
+    profile("agy", "instructions.md", "# agy rules");
+    profile("agy", "skills/learn/SKILL.md", "---\nname: learn\n---");
+    profile("agy", "files/hooks.json", "{}");
+    profile("agy", "settings.json", JSON.stringify({ model: "x" })); // not a managed slot for agy
+
+    const report = installAgent(paths("agy"));
+    const agyHome = path.join(userHome, ".gemini", "config");
+    expect(home("agy")).toBe(agyHome);
+    expect(fs.readlinkSync(path.join(agyHome, "AGENTS.md"))).toBe(
+      path.join(vaultDir, "agents/agy/instructions.md"),
+    );
+    expect(fs.lstatSync(path.join(agyHome, "skills/learn")).isSymbolicLink()).toBe(true);
+    expect(fs.lstatSync(path.join(agyHome, "hooks.json")).isSymbolicLink()).toBe(true);
+    const brain = fs.readFileSync(path.join(agyHome, "skills/brain/SKILL.md"), "utf8");
+    expect(brain).not.toContain("argument-hint");
+    expect(report.settingsFile).toBeNull();
+    expect(report.settings).toEqual([]);
+    expect(fs.existsSync(path.join(agyHome, "settings.json"))).toBe(false);
+
+    const again = agentStatus(paths("agy"));
+    expect(again.links.every((l) => l.action === "none" || l.action === "keep")).toBe(true);
+    expect(again.overrideActive).toBeNull();
+  });
+
+  it("refuses agy's own MCP config and saving a setting", () => {
+    profile("agy", "files/mcp_config.json", "{}");
+    expect(() => collectEntries(paths("agy"))).toThrow(/settings or credentials/);
+    expect(() => saveToProfile(paths("agy"), vaultDir, [], ["model"])).toThrow(
+      /manages no settings for Antigravity/,
+    );
   });
 });
 
