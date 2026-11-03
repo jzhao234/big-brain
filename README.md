@@ -17,7 +17,7 @@ Each AI tool keeps its own private memory of you, and none of them share it. big
 npx @jzhao234/big-brain setup
 ```
 
-That one command installs big-brain, creates a vault at `~/brain`, connects Claude Code and Codex if you have them (MCP server plus the `/brain`, `/capture`, and `/weekly` skills), and prints the config to paste into Claude Desktop or Cursor. Pass a folder to use a different one, such as your Obsidian vault: `npx @jzhao234/big-brain setup ~/Obsidian`. It's safe to run again (anything already set up is left alone), and `--dry-run` shows the plan without changing anything.
+That one command installs big-brain, creates a vault at `~/brain`, connects Claude Code, Codex, and Antigravity (`agy`) if you have them (MCP server plus the `/brain`, `/capture`, and `/weekly` skills), and prints the config to paste into Claude Desktop or Cursor. Pass a folder to use a different one, such as your Obsidian vault: `npx @jzhao234/big-brain setup ~/Obsidian`. It's safe to run again (anything already set up is left alone), and `--dry-run` shows the plan without changing anything.
 
 Then restart your assistant and ask *"what am I working on?"* or *"capture: call the dentist on Friday"*. Other clients, and browser chats like claude.ai and ChatGPT, are covered in [Connect your AI tools](#connect-your-ai-tools).
 
@@ -36,7 +36,7 @@ claude mcp add --scope user big-brain -- big-brain-mcp --vault ~/brain
 - **Plain markdown files.** No database and no lock-in. Open the vault in Obsidian, grep it, or put it in git.
 - **An MCP server with 23 tools:** search, capture, daily logs, projects, tasks, the link graph, related notes, and a vault health check.
 - **A CLI for humans:** `big-brain status`, `big-brain capture`, `big-brain tasks`, and more.
-- **Skills for Claude Code and Codex** (`/brain`, `/capture`, `/weekly`), installed with one command.
+- **Skills for Claude Code, Codex, and Antigravity** (`/brain`, `/capture`, `/weekly`), installed with one command.
 - **Projects as the unit of work.** Each project is one file with a goal, checkbox tasks, and a running log.
 - **Deterministic retrieval first:** fuzzy full-text search with title boosting, `[[wikilink]]` backlinks, tags, and frontmatter filters. No API keys, and it works offline.
 - **Optional local semantic search.** Turn on `embeddings.enabled` and a small on-device model (via `@huggingface/transformers`) adds meaning-based matches, fused with full-text search by Reciprocal Rank Fusion. Paraphrases match, exact terms still count, and nothing leaves your machine. It also powers `related_notes`. See [docs/vault-spec.md](docs/vault-spec.md#search--embeddings-hybrid-retrieval).
@@ -83,6 +83,13 @@ For local clients, run `big-brain-mcp`. The vault is chosen by `--vault <dir>` o
 ```bash
 claude mcp add --scope user big-brain -- big-brain-mcp --vault ~/brain
 claude mcp list        # expect: big-brain ... ✔ Connected
+```
+
+**Antigravity CLI (`agy`)**
+
+```bash
+agy mcp add big-brain -- big-brain-mcp --vault ~/brain
+agy mcp list           # expect: big-brain  stdio  enabled  ...
 ```
 
 **Claude Desktop / Cursor / other MCP clients:** add to the MCP config (e.g. `claude_desktop_config.json`). Use an **absolute** command path: GUI apps are launched without your shell's `PATH`, so a bare `big-brain-mcp` may not resolve (run `which big-brain-mcp` to get it).
@@ -145,13 +152,13 @@ The whole point is that you never re-feed context. The assistant **loads** a sma
 
 ## Skills
 
-Three skills wrap the tools into commands, for Claude Code (`/brain`) and Codex (`$brain`):
+Three skills wrap the tools into commands, for Claude Code and Antigravity (`/brain`) and Codex (`$brain`):
 
 - **`brain`:** load the overview and switch into brain-aware mode for the session
 - **`capture`:** zero-friction capture to the inbox
 - **`weekly`:** a guided weekly review
 
-`big-brain agents install claude codex` installs them for both agents (see below). `big-brain install-skills` still copies the Claude versions into `~/.claude/skills` (`--force` overwrites). They're path-agnostic: they call the `big-brain` CLI / MCP tools and resolve the vault from `BIG_BRAIN_VAULT` (or `--vault`), so the same skill works on every machine.
+`big-brain agents install claude codex agy` installs them for each agent (see below). `big-brain install-skills` still copies the Claude versions into `~/.claude/skills` (`--force` overwrites). They're path-agnostic: they call the `big-brain` CLI / MCP tools and resolve the vault from `BIG_BRAIN_VAULT` (or `--vault`), so the same skill works on every machine.
 
 ## Agent profiles: your agent setup in the vault
 
@@ -165,6 +172,9 @@ agents/claude/settings.json     -> merged into ~/.claude/settings.json
 agents/codex/instructions.md    -> ~/.codex/AGENTS.md
 agents/codex/skills/<name>/     -> ~/.codex/skills/<name>
 agents/codex/config.toml        -> merged into ~/.codex/config.toml
+agents/agy/instructions.md      -> ~/.gemini/config/AGENTS.md
+agents/agy/skills/<name>/       -> ~/.gemini/config/skills/<name>
+agents/agy/files/**             -> ~/.gemini/config/**
 ```
 
 ```bash
@@ -183,6 +193,7 @@ How it stays safe:
 - **Plan first, then write, and roll back on failure.** Every link and settings change is validated before the first write; a refusal leaves the machine untouched, and if a step still fails midway the steps already done are undone (if even that fails, nothing is deleted and the error says where the originals are). Nothing is written through a symlinked folder, and a settings file kept as a symlink (e.g. in a dotfiles repo) stays a symlink. `--prune` removes links whose vault file was deleted.
 - **`save` refuses known secret and state files.** Whole settings files, `.credentials.json`, `auth.json`, `.env` files, history, sessions, caches and databases are refused; save individual settings with `--setting`. It doesn't inspect contents, so review the files and `--setting` values you save (an `env.API_KEY` setting would be copied as is).
 - **Codex hooks stay local.** Codex asks you to trust each hook on each machine, so hook registrations are not managed for Codex. Claude Code users: review new hooks with `/hooks`. Status warns when Codex's `AGENTS.override.md` overrides `AGENTS.md`.
+- **No settings for Antigravity.** agy keeps its settings in `~/.gemini/antigravity-cli/`, outside its customization folder, so big-brain links agy's instructions, skills, and files but merges no settings; `mcp_config.json` and `config.json` are agy's own and never linked. Its `AGENTS.md` lives under `~/.gemini/config/` rather than `~/.gemini/GEMINI.md`, which the Gemini CLI also reads.
 
 `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are honored. The folder name is `folders.agents` in `brain.config.json` (default `agents`), and it is never indexed as notes.
 

@@ -4,6 +4,11 @@ All notable changes to big-brain. The format follows [Keep a Changelog](https://
 
 ## Unreleased
 
+### Added
+
+- Antigravity (`agy`) support. `big-brain setup` registers the MCP server with `agy mcp add` and installs `/brain`, `/capture`, and `/weekly` into `~/.gemini/config/skills` when `agy` is on PATH (`--no-agy` skips it). It checks `agy mcp list` first and never registers when that fails, since `agy mcp add` overwrites a server of the same name.
+- `big-brain agents` manages an `agents/agy/` profile: `instructions.md` links to `~/.gemini/config/AGENTS.md`, plus skills and files. No settings are merged for agy, and `agents save agy --setting` explains why.
+
 ## 0.3.2 (2026-10-14)
 
 ### Fixed

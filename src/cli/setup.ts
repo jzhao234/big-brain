@@ -8,7 +8,8 @@ import { PACKAGE_NAME, VERSION } from "../core/version.js";
 
 /**
  * One-step setup behind `npx @jzhao234/big-brain setup`: install big-brain,
- * create or adopt a vault, register the MCP server with Claude Code and Codex,
+ * create or adopt a vault, register the MCP server with Claude Code, Codex, and
+ * Antigravity (agy),
  * and print config for the apps that can't be registered from the shell.
  *
  * Every step is idempotent: existing installs, vaults, registrations, and
@@ -41,6 +42,7 @@ export interface SetupOptions {
   global?: boolean;
   claude?: boolean;
   codex?: boolean;
+  agy?: boolean;
   /** Use a folder that looks like a code project as the vault anyway. */
   adopt?: boolean;
   dryRun?: boolean;
@@ -57,7 +59,7 @@ export interface SetupStep {
 /** How a client should launch the MCP server (before `--vault <dir>`). */
 export interface ServerLaunch {
   kind: "installed" | "global" | "npx";
-  /** For shell-launched clients (Claude Code, Codex), which inherit PATH. */
+  /** For shell-launched clients (Claude Code, Codex, agy), which inherit PATH. */
   command: string;
   args: string[];
   /**
@@ -75,6 +77,15 @@ export interface SetupResult {
 }
 
 const SERVER_NAME = "big-brain";
+
+/** Shell-launched clients setup registers with, by their command name. */
+type Client = "claude" | "codex" | "agy";
+
+const CLIENT_LABEL: Record<Client, string> = {
+  claude: "Claude Code",
+  codex: "Codex",
+  agy: "Antigravity",
+};
 const SERVER_SCRIPT = path.join("dist", "mcp", "index.js");
 
 // Characters cmd.exe expands or interprets even inside double quotes.
@@ -408,24 +419,83 @@ function describeExisting(output: string): { summary: string; broken: boolean; s
   };
 }
 
+/**
+ * agy has no `mcp get`; find big-brain's row in `agy mcp list` (columns NAME,
+ * TYPE, STATUS, COMMAND/URL, separated by two or more spaces). agy's MCP
+ * config is always user-level, so there is no scope to report.
+ */
+function describeAgyRow(output: string): { summary: string; broken: boolean } | null {
+  const row = output
+    .split(/\r?\n/)
+    .map((line) => line.trim().split(/\s{2,}/))
+    .find((cols) => cols[0] === SERVER_NAME);
+  if (!row) return null;
+  const [, type, status, ...rest] = row;
+  const command = rest.join("  "); // a path may itself contain a double space
+  const missing = missingPaths(command.split(/\s+/));
+  const summary = [type, status, command].filter(Boolean).join("; ");
+  return {
+    summary: missing.length > 0 ? `${summary}; missing: ${missing.join(", ")}` : summary,
+    broken: status !== "enabled" || missing.length > 0,
+  };
+}
+
+type Existing =
+  | { state: "none" }
+  | { state: "registered"; summary: string; broken: boolean; scope?: string }
+  | { state: "unknown"; detail: string };
+
+/** The client's existing big-brain registration, if any. */
+function findExisting(client: Client, deps: SetupDeps): Existing {
+  if (client === "agy") {
+    const r = deps.run(client, ["mcp", "list"]);
+    // `agy mcp add` overwrites a server of the same name, so never add blind.
+    if (r.status !== 0) {
+      return {
+        state: "unknown",
+        detail: `couldn't list agy's MCP servers (${tail(r.stderr || r.stdout) || `exit ${r.status}`}), so nothing was registered`,
+      };
+    }
+    const row = describeAgyRow(r.stdout);
+    return row ? { state: "registered", ...row } : { state: "none" };
+  }
+  const r = deps.run(client, ["mcp", "get", SERVER_NAME]);
+  return r.status === 0
+    ? { state: "registered", ...describeExisting(r.stdout) }
+    : { state: "none" };
+}
+
+/** Where the client looks for user-level skills. */
+function skillsTarget(client: Client, deps: SetupDeps): string {
+  const home =
+    client === "claude"
+      ? (deps.env.CLAUDE_CONFIG_DIR ?? path.join(deps.home, ".claude"))
+      : client === "codex"
+        ? (deps.env.CODEX_HOME ?? path.join(deps.home, ".codex"))
+        : path.join(deps.home, ".gemini", "config");
+  return path.join(home, "skills");
+}
+
 function registerClient(
-  client: "claude" | "codex",
+  client: Client,
   server: ServerLaunch,
   vault: string,
   opts: SetupOptions,
   deps: SetupDeps,
   steps: SetupStep[],
 ): void {
-  const label = client === "claude" ? "Claude Code" : "Codex";
+  const label = CLIENT_LABEL[client];
   const bin = findOnPath(client, deps);
   if (!bin) {
     steps.push({ step: label, status: "skipped", detail: `${client} not found on PATH` });
     return;
   }
   const replace = `\`${client} mcp remove ${SERVER_NAME}\`, then run setup again`;
-  const existing = deps.run(client, ["mcp", "get", SERVER_NAME]);
-  if (existing.status === 0) {
-    const { summary, broken, scope } = describeExisting(existing.stdout);
+  const existing = findExisting(client, deps);
+  if (existing.state === "unknown") {
+    steps.push({ step: `${label} MCP`, status: "failed", detail: existing.detail });
+  } else if (existing.state === "registered") {
+    const { summary, broken, scope } = existing;
     const notUser = scope !== undefined && !/^user/i.test(scope);
     steps.push({
       step: `${label} MCP`,
@@ -462,11 +532,7 @@ function registerClient(
     }
   }
 
-  const skillsHome =
-    client === "claude"
-      ? (deps.env.CLAUDE_CONFIG_DIR ?? path.join(deps.home, ".claude"))
-      : (deps.env.CODEX_HOME ?? path.join(deps.home, ".codex"));
-  const target = path.join(skillsHome, "skills");
+  const target = skillsTarget(client, deps);
   if (opts.dryRun) {
     steps.push({
       step: `${label} skills`,
@@ -516,6 +582,7 @@ export function runSetup(opts: SetupOptions, deps: SetupDeps): SetupResult {
 
   if (opts.claude !== false) registerClient("claude", server, vault, opts, deps, steps);
   if (opts.codex !== false) registerClient("codex", server, vault, opts, deps, steps);
+  if (opts.agy !== false) registerClient("agy", server, vault, opts, deps, steps);
 
   return { vault, server, steps };
 }

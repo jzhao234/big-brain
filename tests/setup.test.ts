@@ -163,6 +163,7 @@ describe("runSetup from npx", () => {
       "Claude Code MCP:kept",
       "Claude Code skills:kept",
       "Codex:skipped",
+      "Antigravity:skipped",
     ]);
   });
 
@@ -233,6 +234,7 @@ describe("runSetup --dry-run", () => {
       "planned",
       "planned",
       "planned",
+      "skipped",
       "skipped",
     ]);
   });
@@ -458,5 +460,71 @@ describe("second review fixes", () => {
 
     const fine = runSetup({ claude: false }, deps(get(`--vault ${spaced}`)));
     expect(fine.steps.find((s) => s.step === "Codex MCP")?.status).toBe("kept");
+  });
+});
+
+describe("runSetup with Antigravity (agy)", () => {
+  const agyStep = (result: ReturnType<typeof runSetup>) =>
+    result.steps.find((s) => s.step === "Antigravity MCP");
+  const listing = (row: string) => (cmd: string, args: string[]) =>
+    cmd === "agy" && args[1] === "list"
+      ? { stdout: `NAME       TYPE   STATUS   COMMAND/URL\nbig-brain  stdio  ${row}\n` }
+      : freshMachine(cmd, args);
+  const added = () => calls.some((c) => c[0] === "agy" && c[2] === "add");
+
+  it("registers agy and installs its skills under ~/.gemini/config", () => {
+    fakeBin("agy");
+    const result = runSetup({ claude: false, codex: false }, deps(freshMachine));
+    expect(calls).toContainEqual(["agy", "mcp", "list"]);
+    const add = calls.find((c) => c[0] === "agy" && c[2] === "add");
+    expect(add?.slice(0, 5)).toEqual(["agy", "mcp", "add", "big-brain", "--"]);
+    expect(add?.slice(-2)).toEqual(["--vault", result.vault]);
+    expect(agyStep(result)?.status).toBe("done");
+    const skill = fs.readFileSync(
+      path.join(home, ".gemini", "config", "skills", "brain", "SKILL.md"),
+      "utf8",
+    );
+    expect(skill).toMatch(/^name: brain$/m);
+    expect(skill).not.toContain("argument-hint");
+  });
+
+  it("keeps a working registration and flags a disabled or stale one", () => {
+    fakeBin("agy");
+    const spaced = path.join(tmp, "My Vault");
+    fs.mkdirSync(spaced);
+    const opts = { claude: false, codex: false };
+
+    const fine = runSetup(opts, deps(listing(`enabled  ${process.execPath} --vault ${spaced}`)));
+    expect(agyStep(fine)?.status).toBe("kept");
+    expect(agyStep(fine)?.detail).toContain("agy mcp remove big-brain");
+
+    const off = runSetup(opts, deps(listing(`disabled  ${process.execPath} --vault ${spaced}`)));
+    expect(agyStep(off)?.status).toBe("failed");
+
+    const stale = runSetup(opts, deps(listing("enabled  /missing/node --vault /missing/vault")));
+    expect(agyStep(stale)?.status).toBe("failed");
+    expect(agyStep(stale)?.detail).toContain("missing: /missing/node, /missing/vault");
+    expect(added()).toBe(false);
+  });
+
+  it("never registers blind when agy can't list its servers", () => {
+    fakeBin("agy");
+    const result = runSetup(
+      { claude: false, codex: false },
+      deps((cmd, args) =>
+        cmd === "agy" && args[1] === "list"
+          ? { status: 1, stderr: "not signed in" }
+          : freshMachine(cmd, args),
+      ),
+    );
+    expect(agyStep(result)?.status).toBe("failed");
+    expect(agyStep(result)?.detail).toContain("not signed in");
+    expect(added()).toBe(false);
+  });
+
+  it("is skipped with --no-agy", () => {
+    fakeBin("agy");
+    runSetup({ claude: false, codex: false, agy: false }, deps(freshMachine));
+    expect(calls.some((c) => c[0] === "agy")).toBe(false);
   });
 });

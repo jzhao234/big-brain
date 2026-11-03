@@ -615,12 +615,13 @@ const SETUP_MARKS: Record<StepStatus, string> = {
 program
   .command("setup [dir]")
   .description(
-    "one-step setup: install, create or adopt a vault (default ~/brain), connect Claude Code and Codex",
+    "one-step setup: install, create or adopt a vault (default ~/brain), connect Claude Code, Codex, and Antigravity",
   )
   .option("--name <name>", "display name for a new vault")
   .option("--no-global", "when run through npx, don't install globally; clients launch it with npx")
   .option("--no-claude", "don't register with Claude Code")
   .option("--no-codex", "don't register with Codex")
+  .option("--no-agy", "don't register with Antigravity (agy)")
   .option("--adopt", "use a folder that looks like a code project as the vault anyway")
   .option("--dry-run", "show what would happen without changing anything")
   .action(
@@ -631,6 +632,7 @@ program
         global: boolean;
         claude: boolean;
         codex: boolean;
+        agy: boolean;
         adopt?: boolean;
         dryRun?: boolean;
       },
@@ -654,7 +656,7 @@ program
           console.log(
             pc.dim(
               "(These are absolute paths. If you switch Node versions, update them, and re-register\n" +
-                " Claude Code or Codex with `claude mcp remove big-brain` / `codex mcp remove big-brain`\n" +
+                " Claude Code, Codex, or Antigravity with `<claude|codex|agy> mcp remove big-brain`\n" +
                 " followed by setup again.)",
             ),
           );
@@ -668,7 +670,7 @@ program
         );
         if (!opts.dryRun) {
           console.log(
-            `\nNext: restart Claude Code or Codex and ask ${pc.bold('"what am I working on?"')}`,
+            `\nNext: restart Claude Code, Codex, or Antigravity and ask ${pc.bold('"what am I working on?"')}`,
           );
         }
         if (result.steps.some((s) => s.status === "failed")) process.exitCode = 1;
@@ -746,7 +748,7 @@ function printAgentReport(report: InstallReport, verbose: boolean): number {
               ? " — no longer managed"
               : "";
     console.log(
-      `  ${SETTING_MARKS[s.action] ?? " "} ${tilde(report.settingsFile)}: ${leafLabel(s.leaf)}${note}`,
+      `  ${SETTING_MARKS[s.action] ?? " "} ${tilde(report.settingsFile ?? "settings")}: ${leafLabel(s.leaf)}${note}`,
     );
   }
   for (const rel of report.stale) {

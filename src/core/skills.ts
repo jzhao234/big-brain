@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 /**
  * Locate the packaged skills for one agent (big-brain/skills/<agent>). Each
  * agent gets its own copy because skill wording and metadata differ (Claude
- * uses /name, Codex uses $name plus agents/openai.yaml).
+ * uses /name and argument-hint, Codex uses $name plus agents/openai.yaml, agy
+ * uses /name with only name and description).
  */
 export function skillsDir(agent = "claude"): string {
   const here = path.dirname(fileURLToPath(import.meta.url)); // dist/core
