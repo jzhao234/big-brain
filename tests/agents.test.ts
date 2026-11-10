@@ -528,11 +528,21 @@ describe("status and the vault scanner", () => {
 });
 
 describe("Antigravity (agy) profile", () => {
-  it("links into ~/.gemini/config, copies the bundled skills, and manages no settings", () => {
+  it("links into ~/.gemini/config and merges settings into ~/.gemini/antigravity-cli/settings.json", () => {
     profile("agy", "instructions.md", "# agy rules");
     profile("agy", "skills/learn/SKILL.md", "---\nname: learn\n---");
     profile("agy", "files/hooks.json", "{}");
-    profile("agy", "settings.json", JSON.stringify({ model: "x" })); // not a managed slot for agy
+    profile("agy", "files/statusline.sh", "#!/bin/sh\necho ok\n", 0o755);
+    profile(
+      "agy",
+      "settings.json",
+      JSON.stringify({
+        colorScheme: "tokyo night",
+        statusLine: { type: "command", command: "~/.gemini/config/statusline.sh" },
+      }),
+    );
+    const cliSettings = path.join(userHome, ".gemini", "antigravity-cli", "settings.json");
+    write(cliSettings, JSON.stringify({ model: "local-choice", trustedWorkspaces: ["/work"] }));
 
     const report = installAgent(paths("agy"));
     const agyHome = path.join(userHome, ".gemini", "config");
@@ -542,22 +552,69 @@ describe("Antigravity (agy) profile", () => {
     );
     expect(fs.lstatSync(path.join(agyHome, "skills/learn")).isSymbolicLink()).toBe(true);
     expect(fs.lstatSync(path.join(agyHome, "hooks.json")).isSymbolicLink()).toBe(true);
+    expect(fs.lstatSync(path.join(agyHome, "statusline.sh")).isSymbolicLink()).toBe(true);
     const brain = fs.readFileSync(path.join(agyHome, "skills/brain/SKILL.md"), "utf8");
     expect(brain).not.toContain("argument-hint");
-    expect(report.settingsFile).toBeNull();
-    expect(report.settings).toEqual([]);
+
+    expect(report.settingsFile).toBe(cliSettings);
+    expect(report.settingsChanged).toBe(true);
     expect(fs.existsSync(path.join(agyHome, "settings.json"))).toBe(false);
+    expect(JSON.parse(fs.readFileSync(cliSettings, "utf8"))).toEqual({
+      model: "local-choice",
+      trustedWorkspaces: ["/work"],
+      colorScheme: "tokyo night",
+      statusLine: { type: "command", command: "~/.gemini/config/statusline.sh" },
+    });
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(report.backupDir as string, "manifest.json"), "utf8"),
+    );
+    expect(manifest.restore).toEqual([expect.objectContaining({ to: cliSettings })]);
 
     const again = agentStatus(paths("agy"));
     expect(again.links.every((l) => l.action === "none" || l.action === "keep")).toBe(true);
+    expect(again.settings.every((s) => s.action === "ok")).toBe(true);
     expect(again.overrideActive).toBeNull();
   });
 
-  it("refuses agy's own MCP config and saving a setting", () => {
-    profile("agy", "files/mcp_config.json", "{}");
-    expect(() => collectEntries(paths("agy"))).toThrow(/settings or credentials/);
-    expect(() => saveToProfile(paths("agy"), vaultDir, [], ["model"])).toThrow(
-      /manages no settings for Antigravity/,
+  it("saves settings from ~/.gemini/antigravity-cli/settings.json and refuses reserved files or hooks", () => {
+    const cliSettings = path.join(userHome, ".gemini", "antigravity-cli", "settings.json");
+    write(
+      cliSettings,
+      JSON.stringify({
+        colorScheme: "tokyo night",
+        permissions: { allow: ["command(ls)"], deny: ["command(rm -rf)"] },
+        trustedWorkspaces: ["/local"],
+      }),
+    );
+    saveToProfile(paths("agy"), vaultDir, [], ["colorScheme", "permissions"]);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(vaultDir, "agents/agy/settings.json"), "utf8")),
+    ).toEqual({
+      colorScheme: "tokyo night",
+      permissions: { allow: ["command(ls)"], deny: ["command(rm -rf)"] },
+    });
+
+    for (const rel of ["files/mcp_config.json", "files/config.json", "files/settings.json"]) {
+      fs.rmSync(path.join(vaultDir, "agents/agy/files"), { recursive: true, force: true });
+      profile("agy", rel, "{}");
+      expect(() => collectEntries(paths("agy")), rel).toThrow(/settings or credentials/);
+    }
+    fs.rmSync(path.join(vaultDir, "agents/agy/files"), { recursive: true, force: true });
+    profile("agy", "settings.json", JSON.stringify({ hooks: { PostToolUse: [] } }));
+    expect(() => installAgent(paths("agy"))).toThrow(/trust review/);
+  });
+
+  it("supports an agent definition that manages no settings", () => {
+    const noSettings = agentPaths(
+      vaultDir,
+      "agents",
+      { ...getAgent("agy"), settingsFile: undefined, settingsHome: undefined },
+      { userHome, env: { XDG_STATE_HOME: path.join(root, "state") } },
+    );
+    expect(noSettings.settingsFile).toBeNull();
+    expect(installAgent(noSettings).settingsFile).toBeNull();
+    expect(() => saveToProfile(noSettings, vaultDir, [], ["colorScheme"])).toThrow(
+      /manages no settings/,
     );
   });
 });

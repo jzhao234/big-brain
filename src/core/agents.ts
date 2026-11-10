@@ -42,10 +42,13 @@ export interface AgentDef {
   /** Skill root inside the home. */
   skillsDir: string;
   /**
-   * Settings file inside the home; the vault fragment uses the same name.
-   * Absent when big-brain manages no settings for the agent.
+   * Settings file name (the vault fragment uses the same name). Lives inside
+   * `settingsHome` when set, otherwise inside the agent's home. Absent when
+   * big-brain manages no settings for the agent.
    */
   settingsFile?: string;
+  /** Home-relative folder holding `settingsFile` when it lives outside `defaultHome`. */
+  settingsHome?: string;
   format: SettingsFormat;
   /** Whether hook registrations in the fragment are managed for this agent. */
   managesHooks: boolean;
@@ -87,11 +90,12 @@ export const AGENTS: readonly AgentDef[] = [
     defaultHome: path.join(".gemini", "config"),
     instructionsFile: "AGENTS.md",
     skillsDir: "skills",
-    // agy keeps its settings outside this folder (~/.gemini/antigravity-cli),
-    // so no settings are managed for it.
+    // agy keeps its CLI settings next door in ~/.gemini/antigravity-cli/settings.json.
+    settingsFile: "settings.json",
+    settingsHome: path.join(".gemini", "antigravity-cli"),
     format: "json",
     managesHooks: false,
-    reserved: ["mcp_config.json", "config.json"],
+    reserved: ["mcp_config.json", "config.json", "settings.json"],
   },
 ];
 
@@ -119,6 +123,8 @@ export interface AgentPaths {
   vault: string;
   /** The agent's home on this machine (e.g. ~/.claude). */
   home: string;
+  /** The agent's settings file on this machine, or null when big-brain manages none. */
+  settingsFile: string | null;
   /** The agent's profile folder in the vault (agents/<name>). */
   profile: string;
   /**
@@ -155,6 +161,10 @@ export function agentPaths(
 ): AgentPaths {
   const override = agent.homeEnv ? sys.env[agent.homeEnv] : undefined;
   const home = canonicalPath(override || path.join(sys.userHome, agent.defaultHome));
+  const settingsDir = agent.settingsHome
+    ? canonicalPath(path.join(sys.userHome, agent.settingsHome))
+    : home;
+  const settingsFile = agent.settingsFile ? path.join(settingsDir, agent.settingsFile) : null;
   const vault = canonicalPath(vaultDir);
   const stateRoot = path.join(
     sys.env.XDG_STATE_HOME || path.join(sys.userHome, ".local", "state"),
@@ -165,6 +175,7 @@ export function agentPaths(
     agent,
     vault,
     home,
+    settingsFile,
     profile: path.join(vault, agentsFolder, agent.name),
     stateFile: path.join(stateRoot, "agents", `${agent.name}-${homeKey}.json`),
     backupRoot: path.join(stateRoot, "backups", agent.name),
@@ -946,7 +957,7 @@ function writeState(p: AgentPaths, state: AgentState): void {
  */
 class Backup {
   readonly dir: string;
-  private taken: { rel: string; backup: string; mode: "move" | "copy" }[] = [];
+  private taken: { from: string; backup: string; mode: "move" | "copy" }[] = [];
   constructor(
     private readonly home: string,
     backupRoot: string,
@@ -957,14 +968,13 @@ class Backup {
     for (let n = 2; fs.existsSync(dir); n++) dir = path.join(backupRoot, `${stamp}-${n}`);
     this.dir = dir;
   }
-  /** Move (or copy, for files we keep using) something out of the agent home. */
-  take(rel: string, mode: "move" | "copy"): string {
-    const from = path.join(this.home, rel);
+  /** Move (or copy, for files we keep using) something into the run's backup folder. */
+  take(rel: string, mode: "move" | "copy", from = path.join(this.home, rel)): string {
     const to = path.join(this.dir, "files", rel);
     fs.mkdirSync(path.dirname(to), { recursive: true });
     if (mode === "move") fs.renameSync(from, to);
     else fs.cpSync(from, to, { recursive: true, preserveTimestamps: true, dereference: true });
-    this.taken.push({ rel, backup: to, mode });
+    this.taken.push({ from, backup: to, mode });
     this.writeManifest();
     return to;
   }
@@ -973,7 +983,7 @@ class Backup {
     let complete = true;
     for (const t of [...this.taken].reverse()) {
       if (t.mode !== "move") continue;
-      const original = path.join(this.home, t.rel);
+      const original = t.from;
       try {
         if (fs.lstatSync(original, { throwIfNoEntry: false })?.isSymbolicLink()) {
           fs.unlinkSync(original);
@@ -989,7 +999,7 @@ class Backup {
   private writeManifest(): void {
     const manifest = {
       home: this.home,
-      restore: this.taken.map((t) => ({ from: t.backup, to: path.join(this.home, t.rel) })),
+      restore: this.taken.map((t) => ({ from: t.backup, to: t.from })),
     };
     atomicWrite(path.join(this.dir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
   }
@@ -1027,15 +1037,16 @@ export function planInstall(p: AgentPaths, opts: InstallOptions = {}) {
   const entries = collectEntries(p);
   const links = entries.map((e) => planLink(p, e, Boolean(opts.replace)));
   const state = readState(p);
-  const settings = p.agent.settingsFile
-    ? planSettingsFile(p, p.agent.settingsFile, state, Boolean(opts.replace))
-    : {
-        settings: [],
-        settingsFile: null,
-        settingsWrite: null,
-        settingsText: "",
-        newSettingsText: null,
-      };
+  const settings =
+    p.agent.settingsFile && p.settingsFile
+      ? planSettingsFile(p, p.agent.settingsFile, p.settingsFile, state, Boolean(opts.replace))
+      : {
+          settings: [],
+          settingsFile: null,
+          settingsWrite: null,
+          settingsText: "",
+          newSettingsText: null,
+        };
 
   const linkedNow = new Set(entries.filter((e) => e.kind !== "bundled-skill").map((e) => e.rel));
   const stale = state.links.filter((rel) => isStaleLink(p, rel, linkedNow));
@@ -1043,7 +1054,13 @@ export function planInstall(p: AgentPaths, opts: InstallOptions = {}) {
 }
 
 /** Three-way plan for the agent's settings file against the vault fragment of the same name. */
-function planSettingsFile(p: AgentPaths, rel: string, state: AgentState, replace: boolean) {
+function planSettingsFile(
+  p: AgentPaths,
+  rel: string,
+  settingsFile: string,
+  state: AgentState,
+  replace: boolean,
+) {
   const fragmentFile = path.join(p.profile, rel);
   if (fs.lstatSync(fragmentFile, { throwIfNoEntry: false })?.isSymbolicLink()) {
     throw new Error(`Symlinks are not allowed in an agent profile: ${rel}`);
@@ -1057,7 +1074,6 @@ function planSettingsFile(p: AgentPaths, rel: string, state: AgentState, replace
           p.agent,
         );
 
-  const settingsFile = path.join(p.home, rel);
   // A settings file kept in a dotfiles repo is often a symlink: read and write
   // the file it points to, so the link itself is never replaced.
   const settingsWrite = settingsTarget(settingsFile);
@@ -1145,13 +1161,13 @@ export function installAgent(p: AgentPaths, opts: InstallOptions = {}): InstallR
 
     const { settingsWrite, newSettingsText } = plan;
     const settingsRel = p.agent.settingsFile;
-    if (settingsRel && settingsWrite !== null && newSettingsText !== null) {
+    if (settingsRel && p.settingsFile && settingsWrite !== null && newSettingsText !== null) {
       // Refuse if the settings changed while we were planning.
       if ((readText(settingsWrite) ?? "") !== plan.settingsText) {
         throw new Error(`${plan.settingsFile} changed during install; run it again`);
       }
       const existed = fs.existsSync(settingsWrite);
-      if (existed) backup.take(settingsRel, "copy");
+      if (existed) backup.take(settingsRel, "copy", p.settingsFile);
       atomicWrite(settingsWrite, newSettingsText);
       undo.push(() =>
         existed ? atomicWrite(settingsWrite, plan.settingsText) : fs.unlinkSync(settingsWrite),
@@ -1306,7 +1322,7 @@ export function saveToProfile(
 
   // Validate everything before changing anything.
   const settingsRel = p.agent.settingsFile;
-  if (settingKeys.length > 0 && !settingsRel) {
+  if (settingKeys.length > 0 && (!settingsRel || !p.settingsFile)) {
     throw new Error(
       `big-brain manages no settings for ${p.agent.label}, so it can't save a setting`,
     );
@@ -1354,12 +1370,12 @@ export function saveToProfile(
   let fragmentText: string | null = null;
   const savedLeaves = new Map<string, Json>();
   const retired = new Set<string>();
-  if (settingKeys.length > 0 && settingsRel) {
+  if (settingKeys.length > 0 && settingsRel && p.settingsFile) {
     fragmentFile = path.join(p.profile, settingsRel);
     const current = parseSettings(
-      readText(settingsTarget(path.join(p.home, settingsRel))) ?? "",
+      readText(settingsTarget(p.settingsFile)) ?? "",
       p.agent.format,
-      settingsRel,
+      p.settingsFile,
     );
     if (fs.lstatSync(fragmentFile, { throwIfNoEntry: false })?.isSymbolicLink()) {
       throw new Error(`Symlinks are not allowed in an agent profile: ${settingsRel}`);
