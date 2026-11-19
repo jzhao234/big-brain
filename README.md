@@ -175,6 +175,7 @@ agents/codex/config.toml        -> merged into ~/.codex/config.toml
 agents/agy/instructions.md      -> ~/.gemini/config/AGENTS.md
 agents/agy/skills/<name>/       -> ~/.gemini/config/skills/<name>
 agents/agy/files/**             -> ~/.gemini/config/**
+agents/agy/settings.json        -> merged into ~/.gemini/antigravity-cli/settings.json
 ```
 
 ```bash
@@ -193,7 +194,7 @@ How it stays safe:
 - **Plan first, then write, and roll back on failure.** Every link and settings change is validated before the first write; a refusal leaves the machine untouched, and if a step still fails midway the steps already done are undone (if even that fails, nothing is deleted and the error says where the originals are). Nothing is written through a symlinked folder, and a settings file kept as a symlink (e.g. in a dotfiles repo) stays a symlink. `--prune` removes links whose vault file was deleted.
 - **`save` refuses known secret and state files.** Whole settings files, `.credentials.json`, `auth.json`, `.env` files, history, sessions, caches and databases are refused; save individual settings with `--setting`. It doesn't inspect contents, so review the files and `--setting` values you save (an `env.API_KEY` setting would be copied as is).
 - **Codex hooks stay local.** Codex asks you to trust each hook on each machine, so hook registrations are not managed for Codex. Claude Code users: review new hooks with `/hooks`. Status warns when Codex's `AGENTS.override.md` overrides `AGENTS.md`.
-- **No settings for Antigravity.** agy keeps its settings in `~/.gemini/antigravity-cli/`, outside its customization folder, so big-brain links agy's instructions, skills, and files but merges no settings; `mcp_config.json` and `config.json` are agy's own and never linked. Its `AGENTS.md` lives under `~/.gemini/config/` rather than `~/.gemini/GEMINI.md`, which the Gemini CLI also reads.
+- **Antigravity split layout.** agy keeps its customizations in `~/.gemini/config/` and its CLI settings next door in `~/.gemini/antigravity-cli/settings.json`, so big-brain links agy's instructions, skills, and files into `~/.gemini/config/` and merges `agents/agy/settings.json` into `~/.gemini/antigravity-cli/settings.json`; `mcp_config.json` and `config.json` are agy's own and never linked. Its `AGENTS.md` lives under `~/.gemini/config/` rather than `~/.gemini/GEMINI.md`, which the Gemini CLI also reads.
 
 `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are honored. The folder name is `folders.agents` in `brain.config.json` (default `agents`), and it is never indexed as notes.
 
