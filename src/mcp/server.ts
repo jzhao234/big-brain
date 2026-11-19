@@ -8,7 +8,7 @@ import { createProject, listProjects, setProjectStatus } from "../core/projects.
 import { relatedNotes } from "../core/related.js";
 import { addTask, completeTask, listTasks, updateTask } from "../core/tasks.js";
 import type { Note } from "../core/types.js";
-import { nowStamp, toLF, todayISO } from "../core/util.js";
+import { nowStamp, todayISO, toLF } from "../core/util.js";
 import type { Vault } from "../core/vault.js";
 import { VERSION } from "../core/version.js";
 

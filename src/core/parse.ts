@@ -18,7 +18,7 @@ import {
 const WIKILINK_RE = /\[\[([^\]|#\n]+?)(?:#([^\]|\n]+?))?(?:\\?\|([^\]\n]+))?\]\]/g;
 const TAG_RE = /(^|[\s(])#([A-Za-z][\w/-]*)/g;
 const HEADING_RE = /^(#{1,6})\s+(.*)$/;
-const TASK_RE = /^\s*[-*] \[([ xX/\-])\]\s+(.*)$/;
+const TASK_RE = /^\s*[-*] \[([ xX/-])\]\s+(.*)$/;
 
 // Each marker may carry a VS16 (U+FE0F) emoji-presentation selector.
 const DUE_RE = /📅\uFE0F?\s*(\d{4}-\d{2}-\d{2})/u;

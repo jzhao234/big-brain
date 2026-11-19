@@ -1,6 +1,6 @@
-import { type ProjectSummary, listProjects } from "./projects.js";
+import { listProjects, type ProjectSummary } from "./projects.js";
 import { listTasks } from "./tasks.js";
-import type { Note, TaskItem } from "./types.js";
+import type { TaskItem } from "./types.js";
 import { todayISO } from "./util.js";
 import type { Vault } from "./vault.js";
 

@@ -1,4 +1,4 @@
-import { type EmbeddingProvider, SemanticIndex, createEmbeddingProvider } from "./embeddings.js";
+import { createEmbeddingProvider, type EmbeddingProvider, SemanticIndex } from "./embeddings.js";
 import type { Note } from "./types.js";
 import type { Vault } from "./vault.js";
 

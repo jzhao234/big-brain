@@ -2,19 +2,18 @@ export { CONFIG_FILENAME, DEFAULT_CONFIG, loadConfig, resolveVault } from "./con
 export { getDailyNote, logToDaily, renderTemplate } from "./daily.js";
 export { runDoctor } from "./doctor.js";
 export {
-  INDEX_DIR,
-  INDEX_FILE,
-  SemanticIndex,
   chunkNote,
   createEmbeddingProvider,
-  hybridSearch,
-  rrfFuse,
   type EmbeddingProvider,
   type HybridDeps,
+  hybridSearch,
+  INDEX_DIR,
+  INDEX_FILE,
+  rrfFuse,
+  SemanticIndex,
 } from "./embeddings.js";
 export { autoCommit, settlePushes } from "./git.js";
-export { relatedNotes, type RelatedNote, type RelatedOptions } from "./related.js";
-export { renderOverview, vaultOverview, type VaultOverview } from "./overview.js";
+export { renderOverview, type VaultOverview, vaultOverview } from "./overview.js";
 export {
   extractHeadings,
   extractInlineTags,
@@ -23,34 +22,35 @@ export {
   parseNote,
 } from "./parse.js";
 export {
+  type CreateProjectInput,
   createProject,
   listProjects,
+  type ProjectSummary,
   projectStatus,
   setProjectStatus,
   summarizeProject,
-  type CreateProjectInput,
-  type ProjectSummary,
 } from "./projects.js";
-export { initVault, templateDir, type InitOptions, type InitResult } from "./scaffold.js";
+export { type RelatedNote, type RelatedOptions, relatedNotes } from "./related.js";
+export { type InitOptions, type InitResult, initVault, templateDir } from "./scaffold.js";
 export {
   defaultClaudeSkillsDir,
+  type InstallSkillsResult,
   installSkills,
   skillsDir,
-  type InstallSkillsResult,
 } from "./skills.js";
 export {
+  type AddTaskInput,
   addTask,
+  type CompleteResult,
   compareTasks,
   completeTask,
   formatTaskLine,
   listTasks,
-  updateTask,
-  type AddTaskInput,
-  type CompleteResult,
   type TaskFilter,
   type TaskStatus,
   type TaskUpdate,
   type UpdateResult,
+  updateTask,
 } from "./tasks.js";
 export type {
   BrainConfig,
@@ -68,5 +68,5 @@ export type {
   TaskPriority,
 } from "./types.js";
 export { makeExcerpt, nowStamp, safeFilename, shortHash, todayISO } from "./util.js";
-export { Vault, type CreateNoteInput } from "./vault.js";
+export { type CreateNoteInput, Vault } from "./vault.js";
 export { PACKAGE_NAME, VERSION } from "./version.js";

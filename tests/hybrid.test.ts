@@ -5,11 +5,11 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runDoctor } from "../src/core/doctor.js";
 import {
-  type EmbeddingProvider,
-  SemanticIndex,
   chunkNote,
+  type EmbeddingProvider,
   hybridSearch,
   rrfFuse,
+  SemanticIndex,
 } from "../src/core/embeddings.js";
 import { relatedNotes } from "../src/core/related.js";
 import { initVault } from "../src/core/scaffold.js";

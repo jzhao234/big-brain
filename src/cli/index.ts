@@ -9,10 +9,10 @@ import pc from "picocolors";
 import {
   AGENTS,
   type AgentDef,
-  type InstallReport,
   agentPaths,
   agentStatus,
   getAgent,
+  type InstallReport,
   installAgent,
   leafLabel,
   saveToProfile,
@@ -20,23 +20,23 @@ import {
 import { resolveVault } from "../core/config.js";
 import { getDailyNote, logToDaily } from "../core/daily.js";
 import { runDoctor } from "../core/doctor.js";
-import { SemanticIndex, createEmbeddingProvider, hybridSearch } from "../core/embeddings.js";
+import { createEmbeddingProvider, hybridSearch, SemanticIndex } from "../core/embeddings.js";
 import { parseFrontmatterAssignments } from "../core/frontmatter.js";
 import { renderOverview, vaultOverview } from "../core/overview.js";
 import { createProject, listProjects, setProjectStatus } from "../core/projects.js";
 import { relatedNotes } from "../core/related.js";
 import { initVault } from "../core/scaffold.js";
 import { defaultClaudeSkillsDir, installSkills } from "../core/skills.js";
-import { type TaskStatus, addTask, completeTask, listTasks, updateTask } from "../core/tasks.js";
+import { addTask, completeTask, listTasks, type TaskStatus, updateTask } from "../core/tasks.js";
 import type { TaskItem } from "../core/types.js";
 import { todayISO } from "../core/util.js";
 import { Vault } from "../core/vault.js";
 import { PACKAGE_NAME, VERSION } from "../core/version.js";
 import {
-  type StepStatus,
   defaultSetupDeps,
   guiConfigSnippet,
   runSetup,
+  type StepStatus,
   vaultEnvLine,
 } from "./setup.js";
 
