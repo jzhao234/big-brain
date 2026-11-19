@@ -4,6 +4,14 @@ All notable changes to big-brain. The format follows [Keep a Changelog](https://
 
 ## Unreleased
 
+### Changed
+
+- big-brain now requires Node 22.12 or newer. Node 20 reached end of life in April 2026, and current releases of `commander` and `vitest` no longer support it. CI tests Node 22 and 24.
+
+### Security
+
+- Dependencies updated so `npm audit` is clean again: zod 4.6 (memory exhaustion validating oversized collections), body-parser 2.4 (denial of service), hono, @hono/node-server, qs, fast-uri, ip-address and the MCP SDK; dev tooling moves to vitest 5 and Biome 2.
+
 ### Added
 
 - Antigravity (`agy`) support. `big-brain setup` registers the MCP server with `agy mcp add` and installs `/brain`, `/capture`, and `/weekly` into `~/.gemini/config/skills` when `agy` is on PATH (`--no-agy` skips it). It checks `agy mcp list` first and never registers when that fails, since `agy mcp add` overwrites a server of the same name.

@@ -4,12 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  type RunResult,
-  type SetupDeps,
   classifyVault,
   defaultSetupDeps,
   guiConfigSnippet,
+  type RunResult,
   runSetup,
+  type SetupDeps,
   vaultEnvLine,
 } from "../src/cli/setup.js";
 import { PACKAGE_NAME, VERSION } from "../src/core/version.js";

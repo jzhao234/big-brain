@@ -201,7 +201,7 @@ const DUE_TOKEN = /\s*📅\uFE0F?\s*\d{4}-\d{2}-\d{2}/gu;
 const DONE_TOKEN = /\s*✅\uFE0F?\s*\d{4}-\d{2}-\d{2}/gu;
 const PRIORITY_TOKEN = /\s*(?:⏫|🔽)\uFE0F?/gu;
 const METADATA_TOKEN = /(?:(?:⏫|🔽)\uFE0F?|(?:📅|⏳|✅)\uFE0F?\s*\d{4}-\d{2}-\d{2})/gu;
-const LINE_RE = /^(\s*[-*] \[)([ xX/\-])(\]\s+)(.*)$/;
+const LINE_RE = /^(\s*[-*] \[)([ xX/-])(\]\s+)(.*)$/;
 
 function splitLine(line: string): { head: string; box: string; gap: string; rest: string } {
   const m = LINE_RE.exec(line);

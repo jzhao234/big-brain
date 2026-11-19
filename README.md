@@ -43,7 +43,7 @@ claude mcp add --scope user big-brain -- big-brain-mcp --vault ~/brain
 - **Optional git auto-commit and push.** Turn on `git.autoCommit` and every note write from any tool commits only the files it touched; add `git.autoPush` to push in the background so your other machines stay in sync. A git failure never blocks a save: if the commit fails the note is still saved, and if the push fails the commit stays local until the next push.
 - **Edits that don't damage notes.** Writes are atomic and locked per note, keep each note's line endings, never land inside code blocks or frontmatter, refuse to rewrite frontmatter they can't parse, and refuse to write anywhere that resolves outside the vault (such as through a symlink). [docs/vault-spec.md](docs/vault-spec.md#known-limits) lists the edge cases these don't cover.
 
-Requires Node 20 or newer. big-brain is pre-1.0: it's used daily, but minor versions may still change behavior; see the [changelog](CHANGELOG.md).
+Requires Node 22.12 or newer. big-brain is pre-1.0: it's used daily, but minor versions may still change behavior; see the [changelog](CHANGELOG.md).
 
 ## Install
 

@@ -8,7 +8,7 @@ import { createProject, listProjects, setProjectStatus } from "../core/projects.
 import { relatedNotes } from "../core/related.js";
 import { addTask, completeTask, listTasks, updateTask } from "../core/tasks.js";
 import type { Note } from "../core/types.js";
-import { nowStamp, toLF, todayISO } from "../core/util.js";
+import { nowStamp, todayISO, toLF } from "../core/util.js";
 import type { Vault } from "../core/vault.js";
 import { VERSION } from "../core/version.js";
 
@@ -164,7 +164,7 @@ export function buildServer(vault: Vault): McpServer {
           .describe("Note type (default 'note')"),
         tags: z.array(z.string()).optional().describe("Tags without #"),
         frontmatter: z
-          .record(z.unknown())
+          .record(z.string(), z.unknown())
           .optional()
           .describe("Extra frontmatter keys, e.g. {status:'active'} "),
         overwrite: z.boolean().optional().describe("Replace an existing note at the same path"),
@@ -204,7 +204,7 @@ export function buildServer(vault: Vault): McpServer {
         "Merge keys into a note's YAML frontmatter (set a key to null to remove it). Use for status, priority, due, area, tags, aliases.",
       inputSchema: {
         ref: z.string().describe("Note path, title, or alias"),
-        updates: z.record(z.unknown()).describe("Keys to set; null deletes a key"),
+        updates: z.record(z.string(), z.unknown()).describe("Keys to set; null deletes a key"),
       },
     },
     async ({ ref, updates }) =>

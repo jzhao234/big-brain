@@ -7,7 +7,7 @@ import { autoCommit } from "./git.js";
 import { parseNote } from "./parse.js";
 import { SearchIndex } from "./search.js";
 import type { BrainConfig, Note, NoteLink, SearchOptions, SearchResult } from "./types.js";
-import { nameKey, openFence, safeFilename, toLF, toPosix, todayISO } from "./util.js";
+import { nameKey, openFence, safeFilename, todayISO, toLF, toPosix } from "./util.js";
 import { assertInside, atomicWriteFile, errorCode, withNoteLock } from "./write.js";
 
 export interface CreateNoteInput {
