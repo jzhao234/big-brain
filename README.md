@@ -150,6 +150,43 @@ The whole point is that you never re-feed context. The assistant **loads** a sma
 
 **Review:** `/weekly` runs a guided pass: triage the inbox, prune projects, reschedule overdue tasks, fix broken links, and **consolidate**: `big-brain doctor` flags bloated notes and near-duplicates, and the review proposes splits/merges/stale-fact pruning for your approval. Capture and search keep a brain useful; consolidation keeps it trustworthy.
 
+## Session context: the right note, before you ask
+
+`big-brain context` prints what an agent should know about the directory it starts in, so a session-start hook can hand it over without anyone remembering to look:
+
+1. **The repository's own note.** The directory's git remote is matched against `repos:` in note frontmatter, by its full path (`owner/repo`, or `group/sub/repo`); write an entry as a URL (`https://gitlab.example.com/group/repo`) to pin its host when the same path exists on two hosts. Exactly one owning note is loaded: its `## Summary` section (or the text before its first section), status, and open tasks. Notes that list the repo under `related_repos:` are named, not loaded. If two notes claim the same repo, none is loaded and `doctor` reports it, so one client's notes never leak into another's session.
+2. **A path rule.** Otherwise the longest matching rule in `brain.config.json` decides: which notes to summarize and which folder's active projects to list.
+3. **The active projects**, when nothing else matches.
+
+```yaml
+---
+type: project
+repos: [acme/widget]          # this note owns these repositories
+related_repos: [acme/infra]   # mentioned, never loaded
+---
+```
+
+```json
+"context": {
+  "maxChars": 4000,
+  "paths": [
+    { "path": "~/work", "notes": ["Estate"], "projects": "work/projects" },
+    { "path": "~", "projects": "" }
+  ]
+}
+```
+
+Output is capped at `maxChars` (default 4000) and ends with a pointer to the vault, so the agent reads more only when it needs to. `--format claude|codex|agy` wraps the text in that agent's session-start hook output; in those formats the command reads the hook's JSON from stdin for the working directory, and on any problem it prints nothing and exits 0, so a hook can never break a session. Register it as a session-start command hook:
+
+- **Claude Code**: a `SessionStart` hook in `agents/claude/settings.json`, which `big-brain agents install` merges into `~/.claude/settings.json`:
+  ```json
+  "hooks": { "SessionStart": [ { "hooks": [ { "type": "command", "command": "big-brain context --format claude" } ] } ] }
+  ```
+- **Codex**: a `SessionStart` command hook in `~/.codex/hooks.json` running `big-brain context --format codex`. Codex asks you to trust a new hook once per machine.
+- **Antigravity**: a `SessionStart` command hook in `~/.gemini/config/hooks.json` (an `agents/agy/files/hooks.json` in the vault links there) running `big-brain context --format agy`.
+
+Set `BIG_BRAIN_VAULT` for the hook, or add `--vault <dir>` to the command.
+
 ## Skills
 
 Three skills wrap the tools into commands, for Claude Code and Antigravity (`/brain`) and Codex (`$brain`):

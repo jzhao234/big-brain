@@ -71,6 +71,8 @@ type: project          # note | project | area | person | reference | daily | in
 created: 2026-01-15    # set automatically on creation
 tags: [adtech, infra]  # merged with inline #tags
 aliases: [ClearLine]   # alternate names for wikilink resolution
+repos: [acme/widget]   # repositories this note owns: `big-brain context` loads it there
+related_repos: [acme/infra]  # repositories it relates to: named by `context`, never loaded
 # project-specific:
 status: active         # idea | active | paused | done | dropped (default: active)
 area: work
