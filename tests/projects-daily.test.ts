@@ -117,3 +117,27 @@ describe("templates with their own frontmatter", () => {
     expect(note.raw).toContain("bad: [");
   });
 });
+
+describe("createProject folder", () => {
+  it("creates the project in an explicit folder, refusing escapes", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bb-project-folder-"));
+    try {
+      initVault(dir, { name: "P" });
+      const vault = new Vault(dir);
+      const note = createProject(vault, {
+        title: "Garden",
+        area: "personal",
+        folder: "life/projects",
+      });
+      expect(note.path).toBe("life/projects/Garden.md");
+      expect(note.type).toBe("project");
+      expect(note.frontmatter.status).toBe("active");
+      expect(createProject(vault, { title: "Default" }).path).toBe("projects/Default.md");
+      expect(() => createProject(vault, { title: "Out", folder: "../x" })).toThrow(
+        "inside the vault",
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

@@ -413,6 +413,12 @@ export function buildServer(vault: Vault): McpServer {
           .optional()
           .describe("Initial status (default active)"),
         area: z.string().optional().describe("Life/work area this belongs to"),
+        folder: z
+          .string()
+          .optional()
+          .describe(
+            "Vault-relative folder, e.g. 'life/projects' (default: the vault's projects folder)",
+          ),
         due: z
           .string()
           .regex(/^\d{4}-\d{2}-\d{2}$/)
