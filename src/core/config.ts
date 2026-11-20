@@ -113,8 +113,13 @@ function validateConfig(value: unknown, file: string): Partial<BrainConfig> {
       const at = `context.paths[${i}]`;
       if (!isObject(rule)) fail(at, "an object");
       const r = rule as Record<string, unknown>;
-      if (typeof r.path !== "string" || r.path.trim() === "") {
-        fail(`${at}.path`, "a non-empty string");
+      // Relative paths would resolve against wherever the hook happens to
+      // run, so a rule could match every directory.
+      if (
+        typeof r.path !== "string" ||
+        !(r.path === "~" || r.path.startsWith("~/") || path.isAbsolute(r.path))
+      ) {
+        fail(`${at}.path`, 'an absolute path or one starting with "~/"');
       }
       if (r.projects !== undefined && typeof r.projects !== "string") {
         fail(`${at}.projects`, "a string");
@@ -127,12 +132,26 @@ function validateConfig(value: unknown, file: string): Partial<BrainConfig> {
       }
     }
   }
+  const maxChars = isObject(raw.context) ? raw.context.maxChars : undefined;
+  if (maxChars !== undefined && !validMaxChars(maxChars)) {
+    fail("context.maxChars", `a whole number from ${MIN_CONTEXT_CHARS} to ${MAX_CONTEXT_CHARS}`);
+  }
   if (raw.ignore !== undefined) {
     if (!Array.isArray(raw.ignore) || !raw.ignore.every((g) => typeof g === "string")) {
       fail("ignore", "a list of glob strings");
     }
   }
   return raw as Partial<BrainConfig>;
+}
+
+export const MIN_CONTEXT_CHARS = 500;
+export const MAX_CONTEXT_CHARS = 100_000;
+
+/** A context size cap that leaves room for the footer and still caps something. */
+export function validMaxChars(n: unknown): n is number {
+  return (
+    Number.isInteger(n) && (n as number) >= MIN_CONTEXT_CHARS && (n as number) <= MAX_CONTEXT_CHARS
+  );
 }
 
 /**

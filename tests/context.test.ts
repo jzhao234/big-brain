@@ -4,7 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadConfig } from "../src/core/config.js";
-import { hookOutput, matchPathRule, repoSlug, sessionContext } from "../src/core/context.js";
+import {
+  hookOutput,
+  matchPathRule,
+  parseRepo,
+  sameRepo,
+  sessionContext,
+} from "../src/core/context.js";
 import { runDoctor } from "../src/core/doctor.js";
 import { initVault } from "../src/core/scaffold.js";
 import { Vault } from "../src/core/vault.js";
@@ -41,20 +47,39 @@ afterEach(() => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-describe("repoSlug", () => {
+describe("parseRepo", () => {
   it.each([
-    ["git@github.com:Owner/Repo.git", "owner/repo"],
-    ["https://github.com/owner/repo", "owner/repo"],
-    ["https://github.com/owner/repo.git/", "owner/repo"],
-    ["ssh://git@github.com/owner/repo.git", "owner/repo"],
-    ["https://user:token@gitlab.example.com/group/sub/repo.git", "sub/repo"],
-    ["owner/repo", "owner/repo"],
-  ])("%s -> %s", (input, slug) => {
-    expect(repoSlug(input)).toBe(slug);
+    ["git@github.com:Owner/Repo.git", { host: "github.com", path: "owner/repo" }],
+    ["github.com:owner/repo", { host: "github.com", path: "owner/repo" }],
+    ["https://github.com/owner/repo", { host: "github.com", path: "owner/repo" }],
+    ["https://github.com/owner/repo.git/", { host: "github.com", path: "owner/repo" }],
+    ["ssh://git@github.com:2222/owner/repo.git", { host: "github.com", path: "owner/repo" }],
+    [
+      "https://user:token@gitlab.example.com/group/sub/repo.git",
+      { host: "gitlab.example.com", path: "group/sub/repo" },
+    ],
+    ["owner/repo", { path: "owner/repo" }],
+    ["group/sub/repo", { path: "group/sub/repo" }],
+    ["gitlab.example.com/group/repo", { host: "gitlab.example.com", path: "group/repo" }],
+  ])("%s", (input, ref) => {
+    expect(parseRepo(input)).toEqual(ref);
   });
 
-  it.each(["", "repo", "https://github.com/owner", "not a url://x"])("rejects %j", (input) => {
-    expect(repoSlug(input)).toBeUndefined();
+  it.each(["", "repo", "https://github.com/owner", "not a url://x", "../other", "owner/re po"])(
+    "rejects %j",
+    (input) => {
+      expect(parseRepo(input)).toBeUndefined();
+    },
+  );
+
+  it("keeps nested groups and hosts apart", () => {
+    const a = parseRepo("https://git.example/client-a/team/app.git")!;
+    const b = parseRepo("https://git.example/client-b/team/app.git")!;
+    expect(sameRepo(a, b)).toBe(false);
+    const gh = parseRepo("git@github.com:acme/widget.git")!;
+    expect(sameRepo(gh, parseRepo("acme/widget")!)).toBe(true);
+    expect(sameRepo(gh, parseRepo("github.com/acme/widget")!)).toBe(true);
+    expect(sameRepo(gh, parseRepo("gitlab.com/acme/widget")!)).toBe(false);
   });
 });
 
@@ -119,6 +144,27 @@ describe("sessionContext", () => {
     expect(runDoctor(new Vault(dir)).find((f) => f.rule === "shared-repo")?.message).toContain(
       "clients/A.md, clients/B.md",
     );
+  });
+
+  it("does not load a note for another group's repository with the same name", () => {
+    write("clients/A.md", "---\nrepos: [client-a/team/app]\n---\n# A\n\n## Summary\n\nSecret A.\n");
+    const repo = checkout("app", "https://git.example/client-b/team/app.git");
+
+    const ctx = sessionContext(new Vault(dir), { cwd: repo });
+
+    expect(ctx.source).toBe("overview");
+    expect(ctx.text).not.toContain("Secret A");
+  });
+
+  it("treats the same path on two named hosts as two repositories", () => {
+    write("notes/Gh.md", "---\nrepos: [github.com/acme/widget]\n---\n# Gh\n");
+    write("notes/Gl.md", "---\nrepos: [gitlab.com/acme/widget]\n---\n# Gl\n");
+    expect(runDoctor(new Vault(dir)).some((f) => f.rule === "shared-repo")).toBe(false);
+
+    write("notes/Any.md", "---\nrepos: [acme/widget]\n---\n# Any\n");
+    const shared = runDoctor(new Vault(dir)).filter((f) => f.rule === "shared-repo");
+    expect(shared).toHaveLength(1);
+    expect(shared[0]?.message).toContain("3 notes");
   });
 
   it("ignores archived owners", () => {
@@ -225,14 +271,29 @@ describe("hookOutput", () => {
 });
 
 describe("context config", () => {
+  it("rejects relative path rules and unusable size caps", () => {
+    setConfig({ context: { paths: [{ path: ".", notes: ["A"] }] } });
+    expect(() => loadConfig(dir)).toThrow("context.paths[0].path must be an absolute path");
+    setConfig({ context: { paths: [{ path: "work" }] } });
+    expect(() => loadConfig(dir)).toThrow("context.paths[0].path must be an absolute path");
+    for (const maxChars of [0, 100, 1.5, 200_000]) {
+      setConfig({ context: { maxChars } });
+      expect(() => loadConfig(dir)).toThrow("context.maxChars must be a whole number");
+    }
+    write("brain.config.json", '{"name":"Ctx","context":{"maxChars":1e309}}');
+    expect(() => loadConfig(dir)).toThrow("context.maxChars must be a whole number");
+  });
+
   it("defaults and validates context.paths", () => {
     expect(loadConfig(dir).context).toEqual({ maxChars: 4000, paths: [] });
     setConfig({ context: { paths: [{ path: "" }] } });
-    expect(() => loadConfig(dir)).toThrow("context.paths[0].path must be a non-empty string");
+    expect(() => loadConfig(dir)).toThrow("context.paths[0].path must be an absolute path");
     setConfig({ context: { paths: [{ path: "~/x", notes: "Estate" }] } });
     expect(() => loadConfig(dir)).toThrow("context.paths[0].notes must be a list");
     setConfig({ context: { maxChars: "big" } });
     expect(() => loadConfig(dir)).toThrow("context.maxChars must be a number");
+    setConfig({ context: { maxChars: 2000, paths: [{ path: "~" }, { path: "/srv/work" }] } });
+    expect(loadConfig(dir).context.maxChars).toBe(2000);
   });
 });
 
@@ -290,6 +351,27 @@ describe("big-brain context CLI", () => {
     expect(result.log).toBe("");
     expect(result.exited).toBe(false);
     expect(result.error).toContain("big-brain context:");
+  });
+
+  it("reports a bad --max-chars without failing a hook", async () => {
+    const hook = await run([
+      "--vault",
+      dir,
+      "context",
+      "--format",
+      "claude",
+      "--max-chars",
+      "0",
+      "--cwd",
+      root,
+    ]);
+    expect(hook.log).toBe("");
+    expect(hook.exited).toBe(false);
+    expect(hook.error).toContain("Invalid --max-chars 0");
+
+    await expect(
+      run(["--vault", dir, "context", "--max-chars", "10", "--cwd", root]),
+    ).rejects.toThrow("CLI exited");
   });
 
   it("rejects an unknown format", async () => {

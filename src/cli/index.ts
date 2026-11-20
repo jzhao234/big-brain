@@ -17,7 +17,12 @@ import {
   leafLabel,
   saveToProfile,
 } from "../core/agents.js";
-import { resolveVault } from "../core/config.js";
+import {
+  MAX_CONTEXT_CHARS,
+  MIN_CONTEXT_CHARS,
+  resolveVault,
+  validMaxChars,
+} from "../core/config.js";
 import { hookOutput, sessionContext } from "../core/context.js";
 import { getDailyNote, logToDaily } from "../core/daily.js";
 import { runDoctor } from "../core/doctor.js";
@@ -644,17 +649,29 @@ program
   )
   .option("--cwd <dir>", "directory to describe (default: the hook's cwd, else the current one)")
   .option("--format <format>", "text, or a hook format: claude | codex | agy", "text")
-  .option("--max-chars <n>", "size cap in characters (default: context.maxChars, 4000)", parseLimit)
+  .option("--max-chars <n>", "size cap in characters (default: context.maxChars, 4000)")
   .option("--json", "JSON output (source, repo, note, text)")
-  .action(async (opts: { cwd?: string; format: string; maxChars?: number; json?: boolean }) => {
+  .action(async (opts: { cwd?: string; format: string; maxChars?: string; json?: boolean }) => {
     const formats = ["text", "claude", "codex", "agy"] as const;
     const format = formats.find((f) => f === opts.format);
     if (format === undefined) fail(`Unknown --format ${opts.format} (want ${formats.join(", ")})`);
+    // Parsed here rather than by commander, so a bad value in a hook command
+    // is reported without failing the session.
+    const maxChars = (): number | undefined => {
+      if (opts.maxChars === undefined) return undefined;
+      const n = Number(opts.maxChars);
+      if (!validMaxChars(n)) {
+        throw new Error(
+          `Invalid --max-chars ${opts.maxChars} (want a whole number from ${MIN_CONTEXT_CHARS} to ${MAX_CONTEXT_CHARS})`,
+        );
+      }
+      return n;
+    };
     if (format === "text") {
       try {
         const result = sessionContext(openVault(), {
           cwd: opts.cwd ?? process.cwd(),
-          maxChars: opts.maxChars,
+          maxChars: maxChars(),
         });
         console.log(opts.json ? JSON.stringify(result, null, 2) : result.text);
       } catch (err) {
@@ -665,8 +682,9 @@ program
     // A session-start hook must never block or break the session: on any
     // problem, say why on stderr, print nothing, and exit 0.
     try {
+      const cap = maxChars();
       const cwd = opts.cwd ?? (await hookCwd()) ?? process.cwd();
-      const result = sessionContext(openVault(), { cwd, maxChars: opts.maxChars });
+      const result = sessionContext(openVault(), { cwd, maxChars: cap });
       console.log(hookOutput(format, result.text));
     } catch (err) {
       console.error(`big-brain context: ${err instanceof Error ? err.message : String(err)}`);

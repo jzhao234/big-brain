@@ -1,4 +1,4 @@
-import { noteRepos } from "./context.js";
+import { noteRepos, sameRepo } from "./context.js";
 import { uncommittedFiles } from "./git.js";
 import { projectStatus } from "./projects.js";
 import type { DoctorFinding } from "./types.js";
@@ -128,19 +128,25 @@ export function runDoctor(vault: Vault): DoctorFinding[] {
   }
 
   // One repository, one owning note: `big-brain context` loads the owner at
-  // session start and refuses to guess between two.
-  const owners = new Map<string, string[]>();
-  for (const note of active) {
-    for (const repo of new Set(noteRepos(note, "repos"))) {
-      owners.set(repo, [...(owners.get(repo) ?? []), note.path]);
+  // session start and refuses to guess between two. Entries overlap when
+  // their paths match and they don't name two different hosts.
+  const claims = active.flatMap((note) =>
+    noteRepos(note, "repos").map((ref) => ({ ref, path: note.path })),
+  );
+  const reported = new Set<string>();
+  for (const [i, claim] of claims.entries()) {
+    const label = claim.ref.host ? `${claim.ref.host}/${claim.ref.path}` : claim.ref.path;
+    if (reported.has(label)) continue;
+    const holders = new Set([claim.path]);
+    for (const other of claims.slice(i + 1)) {
+      if (sameRepo(claim.ref, other.ref)) holders.add(other.path);
     }
-  }
-  for (const [repo, paths] of owners) {
-    if (paths.length > 1) {
+    if (holders.size > 1) {
+      reported.add(label);
       findings.push({
         severity: "warning",
         rule: "shared-repo",
-        message: `${repo} is listed under repos: by ${paths.length} notes (${paths.join(", ")}), so session context loads none of them; keep it in one note and use related_repos: in the others`,
+        message: `${label} is listed under repos: by ${holders.size} notes (${[...holders].join(", ")}), so session context loads none of them; keep it in one note and use related_repos: in the others`,
       });
     }
   }

@@ -47,47 +47,74 @@ const MAX_TASK_CHARS = 120;
 const TRUNCATED = "\n… (cut to fit; read the note for the rest)";
 
 /**
- * Normalize a git remote or a frontmatter entry to lowercase `owner/repo`:
- * `git@github.com:Owner/Repo.git`, `https://github.com/owner/repo`,
- * `ssh://git@host/owner/repo.git` and `owner/repo` all qualify.
+ * A repository reference: its full path on the host (`owner/repo`, or
+ * `group/sub/repo` on hosts with nested groups), lowercased, and the host
+ * when known. The whole path is kept so `a/team/app` and `b/team/app` stay
+ * different repositories.
  */
-export function repoSlug(input: string): string | undefined {
+export interface RepoRef {
+  host?: string;
+  path: string;
+}
+
+const SEGMENT = /^[\w.-]+$/;
+
+/**
+ * Parse a git remote or a frontmatter entry: `git@github.com:Owner/Repo.git`,
+ * `github.com:owner/repo`, `https://github.com/owner/repo`,
+ * `ssh://git@host:2222/owner/repo.git`, `owner/repo`, and
+ * `gitlab.example.com/group/sub/repo` (a first segment with a dot, followed
+ * by at least two more, is read as the host).
+ */
+export function parseRepo(input: string): RepoRef | undefined {
   const s = input
     .trim()
     .replace(/\/+$/, "")
     .replace(/\.git$/i, "");
   if (s === "") return undefined;
+  let host: string | undefined;
   let pathname: string;
-  const scp = /^[^\s/@]+@[^\s:/]+:(.+)$/.exec(s);
-  if (scp) pathname = scp[1]!;
-  else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) {
+  // scp-like syntax: [user@]host:path (not a URL, whose colon is followed by //).
+  const scp = /^(?:[^\s/@]+@)?([^\s:/@]+):(?!\/\/)(.+)$/.exec(s);
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) {
     try {
-      pathname = new URL(s).pathname;
+      const url = new URL(s);
+      host = url.hostname || undefined;
+      pathname = url.pathname;
     } catch {
       return undefined;
     }
+  } else if (scp) {
+    host = scp[1];
+    pathname = scp[2]!;
   } else pathname = s;
-  const parts = pathname.split("/").filter(Boolean);
-  const owner = parts[parts.length - 2];
-  const repo = parts[parts.length - 1];
-  // Owner and repository names are plain words: anything else (spaces, a
-  // stray colon) means the input was not a repository reference.
-  const plain = /^[\w.-]+$/;
-  if (owner === undefined || repo === undefined || !plain.test(owner) || !plain.test(repo)) {
+  let parts = pathname.split("/").filter(Boolean);
+  if (host === undefined && parts.length >= 3 && parts[0]!.includes(".")) {
+    host = parts[0];
+    parts = parts.slice(1);
+  }
+  // Plain words only: anything else (spaces, "..", a stray colon) means the
+  // input was not a repository reference.
+  if (parts.length < 2 || !parts.every((p) => SEGMENT.test(p) && p !== "." && p !== "..")) {
     return undefined;
   }
-  return `${owner}/${repo}`.toLowerCase();
+  return { ...(host ? { host: host.toLowerCase() } : {}), path: parts.join("/").toLowerCase() };
 }
 
-/** The repos a note lists under a frontmatter key, normalized. */
-export function noteRepos(note: Note, key: "repos" | "related_repos"): string[] {
+/** Same path, and the same host whenever both name one. */
+export function sameRepo(a: RepoRef, b: RepoRef): boolean {
+  return a.path === b.path && (a.host === undefined || b.host === undefined || a.host === b.host);
+}
+
+/** The repos a note lists under a frontmatter key, parsed. */
+export function noteRepos(note: Note, key: "repos" | "related_repos"): RepoRef[] {
   return asStringArray(note.frontmatter[key])
-    .map(repoSlug)
-    .filter((r): r is string => r !== undefined);
+    .map(parseRepo)
+    .filter((r): r is RepoRef => r !== undefined);
 }
 
-/** owner/repo of the directory's git remote (origin first), if any. */
-export function gitRepoSlug(cwd: string): string | undefined {
+/** The directory's git remote (origin first), if any. */
+export function gitRepo(cwd: string): RepoRef | undefined {
   const run = (args: string[]) =>
     execFileSync("git", ["-C", cwd, ...args], {
       encoding: "utf8",
@@ -98,7 +125,7 @@ export function gitRepoSlug(cwd: string): string | undefined {
   try {
     const remotes = run(["remote"]).split("\n").filter(Boolean);
     const remote = remotes.includes("origin") ? "origin" : remotes[0];
-    return remote === undefined ? undefined : repoSlug(run(["remote", "get-url", remote]));
+    return remote === undefined ? undefined : parseRepo(run(["remote", "get-url", remote]));
   } catch {
     return undefined; // not a repository, no git, or a hung remote helper
   }
@@ -107,15 +134,21 @@ export function gitRepoSlug(cwd: string): string | undefined {
 export function sessionContext(vault: Vault, opts: ContextOptions): SessionContext {
   const maxChars = opts.maxChars ?? vault.config.context.maxChars;
   const footer = `\n---\nVault: ${vault.dir}. This is a summary: read a note in full with read_note or \`big-brain show\`, look things up with search_notes or \`big-brain search\`, and check GitHub for code history before asking the user.`;
-  const budget = Math.max(0, maxChars - footer.length);
+  // The footer always survives; only a vault path longer than the cap could
+  // push past it, and then the result is cut hard.
+  const finish = (parts: string[]) => {
+    const text = clip(parts, maxChars - footer.length) + footer;
+    return text.length <= maxChars ? text : text.slice(0, maxChars);
+  };
   const notes = vault.notes();
-  const repo = gitRepoSlug(opts.cwd);
+  const remote = gitRepo(opts.cwd);
+  const repo = remote?.path;
 
-  if (repo !== undefined) {
-    const owners = notes.filter((n) => noteRepos(n, "repos").includes(repo));
-    const related = notes.filter(
-      (n) => !owners.includes(n) && noteRepos(n, "related_repos").includes(repo),
-    );
+  if (remote !== undefined) {
+    const owns = (n: Note, key: "repos" | "related_repos") =>
+      noteRepos(n, key).some((r) => sameRepo(r, remote));
+    const owners = notes.filter((n) => owns(n, "repos"));
+    const related = notes.filter((n) => !owners.includes(n) && owns(n, "related_repos"));
     if (owners.length === 1) {
       const owner = owners[0]!;
       const parts = [
@@ -127,7 +160,7 @@ export function sessionContext(vault: Vault, opts: ContextOptions): SessionConte
           ? `Related notes (not loaded): ${related.map((n) => `${n.title} (${n.path})`).join("; ")}`
           : "",
       ];
-      return { source: "repo", repo, note: owner.path, text: clip(parts, budget) + footer };
+      return { source: "repo", repo, note: owner.path, text: finish(parts) };
     }
     if (owners.length > 1) {
       // Never guess between owners: two notes claiming one repo is a vault
@@ -136,7 +169,7 @@ export function sessionContext(vault: Vault, opts: ContextOptions): SessionConte
         `# Brain context: ${repo}`,
         `Several notes list ${repo} under repos:, so none was loaded: ${owners.map((n) => `${n.title} (${n.path})`).join("; ")}. Read the right one before starting.`,
       ];
-      return { source: "repo", repo, text: clip(parts, budget) + footer };
+      return { source: "repo", repo, text: finish(parts) };
     }
   }
 
@@ -151,11 +184,11 @@ export function sessionContext(vault: Vault, opts: ContextOptions): SessionConte
       if (note) parts.push(`## ${note.title} (${note.path})\n${summaryOf(note)}`);
     }
     if (rule.projects !== undefined) parts.push(projectsBlock(notes, rule.projects));
-    return { source: "path", repo, text: clip(parts, budget) + footer };
+    return { source: "path", repo, text: finish(parts) };
   }
 
   const parts = [`# Brain context (${vault.config.name})`, projectsBlock(notes, "")];
-  return { source: "overview", repo, text: clip(parts, budget) + footer };
+  return { source: "overview", repo, text: finish(parts) };
 }
 
 /** The longest rule whose path contains `cwd` (both compared as real paths). */
@@ -257,6 +290,7 @@ function clipLine(text: string, max: number): string {
 function clip(parts: string[], budget: number): string {
   const text = parts.filter((p) => p.trim() !== "").join("\n\n");
   if (text.length <= budget) return text;
+  if (budget <= TRUNCATED.length) return "";
   const room = Math.max(0, budget - TRUNCATED.length);
   const cut = text.lastIndexOf("\n", room);
   return `${text.slice(0, cut > 0 ? cut : room)}${TRUNCATED}`;
