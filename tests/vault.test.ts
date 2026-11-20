@@ -567,6 +567,12 @@ describe("frontmatter and section boundaries", () => {
       expect(read("notes/Bom.md")).toBe("\ufeff---\ntype: note\n---\nnew\n");
     });
 
+    it("edits in place after a stray carriage return (normalized like every write)", () => {
+      write("notes/Cr.md", "# Cr\r\n\r\nold\r\r\n");
+      vault.editNote("notes/Cr.md", "old", "new");
+      expect(read("notes/Cr.md")).toBe("# Cr\r\n\r\nnew\r\n");
+    });
+
     it("edits a note with no frontmatter", () => {
       write("notes/Plain.md", "# Plain\n\nold\n");
       vault.editNote("Plain", "old", "new");

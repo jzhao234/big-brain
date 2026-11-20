@@ -383,9 +383,11 @@ export class Vault {
     if (target === replacement) throw new Error("old_text and new_text are the same");
     let replacements = 0;
     const note = this.mutateNote(ref, "edit", (note) => {
-      // The parsed body is a suffix of the file, so this split never puts any of
-      // the frontmatter block (even a closing `---` with no newline) in `body`.
-      const body = toLF(note.body);
+      // parseNote reads the file through toLF once, as mutateNote does, so the
+      // parsed body is a suffix of `raw`: splitting there never puts any of the
+      // frontmatter block (even a closing `---` with no newline) in `body`.
+      const body = note.body;
+      if (!note.raw.endsWith(body)) throw new Error(`Could not locate the body of ${note.path}`);
       const head = note.raw.slice(0, note.raw.length - body.length);
       const parts = body.split(target);
       let count = 0;
