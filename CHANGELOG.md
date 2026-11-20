@@ -2,12 +2,6 @@
 
 All notable changes to big-brain. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/) (below 1.0, a minor version may change behavior).
 
-## Unreleased
-
-### Added
-
-- `create_project` (MCP) and `big-brain project new` accept a `folder` (`--folder`), so a vault that keeps projects in more than one place (say `work/projects` and `life/projects`) can file each where it belongs. Without it, projects still go to `folders.projects`.
-
 ## 0.4.0 (2026-11-20)
 
 ### Changed
@@ -23,6 +17,7 @@ All notable changes to big-brain. The format follows [Keep a Changelog](https://
 - Antigravity (`agy`) support. `big-brain setup` registers the MCP server with `agy mcp add` and installs `/brain`, `/capture`, and `/weekly` into `~/.gemini/config/skills` when `agy` is on PATH (`--no-agy` skips it). It checks `agy mcp list` first and never registers when that fails, since `agy mcp add` overwrites a server of the same name.
 - `big-brain agents` manages an `agents/agy/` profile: `instructions.md` links to `~/.gemini/config/AGENTS.md`, skills and files link under `~/.gemini/config/`, and `settings.json` merges three ways into `~/.gemini/antigravity-cli/settings.json`.
 - `create_note` (MCP) accepts any note type and an optional `folder`, and `big-brain new` takes `--folder`. Built-in types still pick their folder; a custom type such as `brag` or `client` defaults to `notes/` unless a folder is given. Before, the MCP tool rejected every type outside six built-ins and had no way to choose a folder.
+- `create_project` (MCP) and `big-brain project new` accept a `folder` (`--folder`), so a vault that keeps projects in more than one place (say `work/projects` and `life/projects`) can file each where it belongs. Without it, projects still go to `folders.projects`.
 - `big-brain context` prints what an agent should know about a directory, for session-start hooks: the one note whose `repos:` frontmatter owns the directory's git repository (summary, status, open tasks, and the names of notes listing it under `related_repos:`), else the longest matching `context.paths` rule in `brain.config.json`, else the active projects. `--format claude|codex|agy` emits each agent's hook output; hook formats read the working directory from the hook's stdin and never fail the session. Output is capped by `context.maxChars` (default 4000). `doctor` adds `shared-repo` for a repository claimed by two notes, which loads neither.
 - `big-brain doctor` checks three more things: `ambiguous-link` (a wikilink that only matches the filenames of several notes, such as two `fleet.md` in different folders), `duplicate-heading` (two sibling sections with the same heading, where appends only ever reach the first), and `uncommitted-changes` (files left uncommitted in an auto-commit vault).
 
