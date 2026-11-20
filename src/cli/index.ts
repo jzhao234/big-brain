@@ -554,16 +554,19 @@ project
   .description("create a project")
   .option("-g, --goal <goal>", "definition of done")
   .option("-a, --area <area>", "life/work area")
+  .option("-f, --folder <folder>", "vault-relative folder (default: folders.projects)")
   .option("-d, --due <date>", "YYYY-MM-DD")
-  .action((words: string[], opts: { goal?: string; area?: string; due?: string }) => {
-    try {
-      const vault = openVault();
-      const note = createProject(vault, { title: words.join(" "), ...opts });
-      console.log(pc.green(`Created project ${note.path}`));
-    } catch (err) {
-      fail(err);
-    }
-  });
+  .action(
+    (words: string[], opts: { goal?: string; area?: string; folder?: string; due?: string }) => {
+      try {
+        const vault = openVault();
+        const note = createProject(vault, { title: words.join(" "), ...opts });
+        console.log(pc.green(`Created project ${note.path}`));
+      } catch (err) {
+        fail(err);
+      }
+    },
+  );
 
 project
   .command("status <ref> <status>")

@@ -71,6 +71,8 @@ export interface CreateProjectInput {
   area?: string;
   due?: string;
   tags?: string[];
+  /** Vault-relative folder; defaults to folders.projects. */
+  folder?: string;
 }
 
 export function createProject(vault: Vault, input: CreateProjectInput): Note {
@@ -99,6 +101,7 @@ export function createProject(vault: Vault, input: CreateProjectInput): Note {
   return vault.createNote({
     title: input.title,
     type: "project",
+    folder: input.folder,
     tags: uniq([...asStringArray(templateTags), ...(input.tags ?? [])]),
     frontmatter: {
       ...templateFields,

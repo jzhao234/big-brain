@@ -2,6 +2,12 @@
 
 All notable changes to big-brain. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/) (below 1.0, a minor version may change behavior).
 
+## Unreleased
+
+### Added
+
+- `create_project` (MCP) and `big-brain project new` accept a `folder` (`--folder`), so a vault that keeps projects in more than one place (say `work/projects` and `life/projects`) can file each where it belongs. Without it, projects still go to `folders.projects`.
+
 ## 0.4.0 (2026-11-20)
 
 ### Changed
