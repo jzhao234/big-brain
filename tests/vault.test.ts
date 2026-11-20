@@ -548,6 +548,25 @@ describe("frontmatter and section boundaries", () => {
       expect(read("notes/Win.md")).toBe("# Win\r\n\r\nlines one and two\r\n");
     });
 
+    it("never exposes the closing delimiter of a frontmatter-only note without a newline", () => {
+      write("notes/Fm.md", "---\ntype: project\n---");
+      expect(() => vault.editNote("notes/Fm.md", "---", "")).toThrow(/not found in the body/);
+      expect(read("notes/Fm.md")).toBe("---\ntype: project\n---");
+    });
+
+    it("counts overlapping occurrences as ambiguous", () => {
+      write("notes/Fruit.md", "# Fruit\n\nbanana\n");
+      expect(() => vault.editNote("Fruit", "ana", "x")).toThrow(/occurs 2 times/);
+      expect(vault.editNote("Fruit", "ana", "x", true).replacements).toBe(1);
+      expect(read("notes/Fruit.md")).toBe("# Fruit\n\nbxna\n");
+    });
+
+    it("keeps a BOM and the frontmatter bytes as they were", () => {
+      write("notes/Bom.md", "\ufeff---\ntype: note\n---\nold\n");
+      vault.editNote("notes/Bom.md", "old", "new");
+      expect(read("notes/Bom.md")).toBe("\ufeff---\ntype: note\n---\nnew\n");
+    });
+
     it("edits a note with no frontmatter", () => {
       write("notes/Plain.md", "# Plain\n\nold\n");
       vault.editNote("Plain", "old", "new");

@@ -228,7 +228,7 @@ export function buildServer(vault: Vault): McpServer {
     {
       title: "Edit a passage in a note",
       description:
-        "Replace one exact passage of a note's body with new text; everything else stays byte for byte. old_text must appear exactly once (copy it from read_note, with enough surrounding words to be unique) unless replace_all is set. The safe way to correct or update existing text, in a note of any size; prefer it to replace_note_body.",
+        "Replace one exact passage of a note's body with new text; the rest of the note stays as it was. old_text must appear exactly once (copy it from read_note, with enough surrounding words to be unique) unless replace_all is set. The safe way to correct or update existing text, in a note of any size; prefer it to replace_note_body.",
       inputSchema: {
         ref: z.string().describe("Note path, title, or alias"),
         old_text: z.string().describe("The exact passage to replace, copied from the note's body"),

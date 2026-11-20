@@ -363,11 +363,13 @@ export class Vault {
   }
 
   /**
-   * Replace an exact passage of a note's body, leaving every other byte as it
-   * was. `oldText` must occur exactly once unless `replaceAll` is set, so a
-   * stale or ambiguous edit fails instead of landing in the wrong place. The
-   * frontmatter block is never touched (use updateFrontmatter), which also
-   * keeps this working on a note whose YAML doesn't parse.
+   * Replace an exact passage of a note's body, leaving the rest of the file as
+   * it was (a file mixing CRLF and LF still gets its line endings normalized,
+   * as every write does). `oldText` must occur exactly once, overlapping
+   * occurrences included, unless `replaceAll` is set, so a stale or ambiguous
+   * edit fails instead of landing in the wrong place. The frontmatter block is
+   * never touched (use updateFrontmatter), which also keeps this working on a
+   * note whose YAML doesn't parse.
    */
   editNote(
     ref: string,
@@ -381,11 +383,13 @@ export class Vault {
     if (target === replacement) throw new Error("old_text and new_text are the same");
     let replacements = 0;
     const note = this.mutateNote(ref, "edit", (note) => {
-      const lines = note.raw.split("\n");
-      const head = lines.slice(0, note.bodyLine).join("\n");
-      const body = lines.slice(note.bodyLine).join("\n");
+      // The parsed body is a suffix of the file, so this split never puts any of
+      // the frontmatter block (even a closing `---` with no newline) in `body`.
+      const body = toLF(note.body);
+      const head = note.raw.slice(0, note.raw.length - body.length);
       const parts = body.split(target);
-      const count = parts.length - 1;
+      let count = 0;
+      for (let at = body.indexOf(target); at !== -1; at = body.indexOf(target, at + 1)) count++;
       if (count === 0) {
         throw new Error(
           `old_text not found in the body of ${note.path}; read the note and copy the passage exactly (frontmatter is edited with update_frontmatter)`,
@@ -396,11 +400,11 @@ export class Vault {
           `old_text occurs ${count} times in ${note.path}; include more surrounding text so it matches once, or set replace_all`,
         );
       }
-      replacements = replaceAll ? count : 1;
+      replacements = replaceAll ? parts.length - 1 : 1;
       const edited = replaceAll
         ? parts.join(replacement)
         : `${parts[0]}${replacement}${parts.slice(1).join(target)}`;
-      return note.bodyLine > 0 ? `${head}\n${edited}` : edited;
+      return `${head}${edited}`;
     });
     return { note, replacements };
   }
