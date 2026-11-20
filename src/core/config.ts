@@ -22,6 +22,7 @@ export const DEFAULT_CONFIG: BrainConfig = {
   staleProjectDays: 21,
   git: { autoCommit: false, autoPush: false },
   embeddings: { enabled: false, model: "Xenova/all-MiniLM-L6-v2" },
+  context: { maxChars: 4000, paths: [] },
 };
 
 export function loadConfig(vaultDir: string): BrainConfig {
@@ -46,6 +47,7 @@ export function loadConfig(vaultDir: string): BrainConfig {
     ignore: raw.ignore ?? [],
     git: { ...DEFAULT_CONFIG.git, ...(raw.git ?? {}) },
     embeddings: { ...DEFAULT_CONFIG.embeddings, ...(raw.embeddings ?? {}) },
+    context: { ...DEFAULT_CONFIG.context, ...(raw.context ?? {}) },
   };
 }
 
@@ -97,11 +99,33 @@ function validateConfig(value: unknown, file: string): Partial<BrainConfig> {
       { autoCommit: "boolean", autoPush: "boolean", authorName: "string", authorEmail: "string" },
     ],
     ["embeddings", { enabled: "boolean", model: "string" }],
+    ["context", { maxChars: "number" }],
   ] as const) {
     const sub = raw[section];
     if (sub === undefined) continue;
     if (!isObject(sub)) fail(section, "an object");
     check(sub as Record<string, unknown>, `${section}.`, types);
+  }
+  const paths = isObject(raw.context) ? raw.context.paths : undefined;
+  if (paths !== undefined) {
+    if (!Array.isArray(paths)) fail("context.paths", "a list of rules");
+    for (const [i, rule] of (paths as unknown[]).entries()) {
+      const at = `context.paths[${i}]`;
+      if (!isObject(rule)) fail(at, "an object");
+      const r = rule as Record<string, unknown>;
+      if (typeof r.path !== "string" || r.path.trim() === "") {
+        fail(`${at}.path`, "a non-empty string");
+      }
+      if (r.projects !== undefined && typeof r.projects !== "string") {
+        fail(`${at}.projects`, "a string");
+      }
+      if (
+        r.notes !== undefined &&
+        (!Array.isArray(r.notes) || !r.notes.every((n) => typeof n === "string"))
+      ) {
+        fail(`${at}.notes`, "a list of note paths or titles");
+      }
+    }
   }
   if (raw.ignore !== undefined) {
     if (!Array.isArray(raw.ignore) || !raw.ignore.every((g) => typeof g === "string")) {

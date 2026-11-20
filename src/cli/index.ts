@@ -18,6 +18,7 @@ import {
   saveToProfile,
 } from "../core/agents.js";
 import { resolveVault } from "../core/config.js";
+import { hookOutput, sessionContext } from "../core/context.js";
 import { getDailyNote, logToDaily } from "../core/daily.js";
 import { runDoctor } from "../core/doctor.js";
 import { createEmbeddingProvider, hybridSearch, SemanticIndex } from "../core/embeddings.js";
@@ -74,6 +75,45 @@ function parseLimit(value: string): number {
     throw new Error(`Invalid limit: ${value} (want a positive integer)`);
   }
   return limit;
+}
+
+const HOOK_STDIN_TIMEOUT_MS = 500;
+
+/**
+ * The `cwd` field of the JSON a hook runner writes to stdin (Claude Code and
+ * Codex both send one). Gives up quickly when stdin is a terminal, empty, or
+ * never closes, since a session-start hook must not hang.
+ */
+async function hookCwd(): Promise<string | undefined> {
+  if (process.stdin.isTTY) return undefined;
+  const raw = await new Promise<string>((resolve) => {
+    let data = "";
+    const done = () => {
+      clearTimeout(timer);
+      // Destroyed, not paused: an open pipe that never ends would otherwise
+      // keep the process alive after the context is printed.
+      process.stdin.destroy();
+      resolve(data);
+    };
+    const timer = setTimeout(done, HOOK_STDIN_TIMEOUT_MS);
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk: string) => {
+      data += chunk;
+      if (data.length > 1_000_000) done();
+    });
+    process.stdin.on("end", done);
+    process.stdin.on("error", done);
+  });
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && "cwd" in parsed) {
+      const cwd = (parsed as { cwd?: unknown }).cwd;
+      return typeof cwd === "string" && cwd !== "" ? cwd : undefined;
+    }
+  } catch {
+    // not JSON: no cwd
+  }
+  return undefined;
 }
 
 program
@@ -594,6 +634,42 @@ program
       process.exitCode = errors > 0 ? 1 : 0;
     } catch (err) {
       fail(err);
+    }
+  });
+
+program
+  .command("context")
+  .description(
+    "print what an agent should know about a directory (the note owning its repo, or a fallback) for session-start hooks",
+  )
+  .option("--cwd <dir>", "directory to describe (default: the hook's cwd, else the current one)")
+  .option("--format <format>", "text, or a hook format: claude | codex | agy", "text")
+  .option("--max-chars <n>", "size cap in characters (default: context.maxChars, 4000)", parseLimit)
+  .option("--json", "JSON output (source, repo, note, text)")
+  .action(async (opts: { cwd?: string; format: string; maxChars?: number; json?: boolean }) => {
+    const formats = ["text", "claude", "codex", "agy"] as const;
+    const format = formats.find((f) => f === opts.format);
+    if (format === undefined) fail(`Unknown --format ${opts.format} (want ${formats.join(", ")})`);
+    if (format === "text") {
+      try {
+        const result = sessionContext(openVault(), {
+          cwd: opts.cwd ?? process.cwd(),
+          maxChars: opts.maxChars,
+        });
+        console.log(opts.json ? JSON.stringify(result, null, 2) : result.text);
+      } catch (err) {
+        fail(err);
+      }
+      return;
+    }
+    // A session-start hook must never block or break the session: on any
+    // problem, say why on stderr, print nothing, and exit 0.
+    try {
+      const cwd = opts.cwd ?? (await hookCwd()) ?? process.cwd();
+      const result = sessionContext(openVault(), { cwd, maxChars: opts.maxChars });
+      console.log(hookOutput(format, result.text));
+    } catch (err) {
+      console.error(`big-brain context: ${err instanceof Error ? err.message : String(err)}`);
     }
   });
 

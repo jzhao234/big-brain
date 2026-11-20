@@ -1,3 +1,4 @@
+import { noteRepos } from "./context.js";
 import { uncommittedFiles } from "./git.js";
 import { projectStatus } from "./projects.js";
 import type { DoctorFinding } from "./types.js";
@@ -122,6 +123,24 @@ export function runDoctor(vault: Vault): DoctorFinding[] {
         severity: "warning",
         rule: "uncommitted-changes",
         message: `${dirty.length} file${dirty.length === 1 ? " has" : "s have"} uncommitted changes (${dirty.slice(0, 5).join(", ")}${dirty.length > 5 ? ", …" : ""}); commit them, or check why an auto-commit failed`,
+      });
+    }
+  }
+
+  // One repository, one owning note: `big-brain context` loads the owner at
+  // session start and refuses to guess between two.
+  const owners = new Map<string, string[]>();
+  for (const note of active) {
+    for (const repo of new Set(noteRepos(note, "repos"))) {
+      owners.set(repo, [...(owners.get(repo) ?? []), note.path]);
+    }
+  }
+  for (const [repo, paths] of owners) {
+    if (paths.length > 1) {
+      findings.push({
+        severity: "warning",
+        rule: "shared-repo",
+        message: `${repo} is listed under repos: by ${paths.length} notes (${paths.join(", ")}), so session context loads none of them; keep it in one note and use related_repos: in the others`,
       });
     }
   }

@@ -140,6 +140,24 @@ export interface BrainConfig {
   git: GitConfig;
   /** Optional local semantic-embedding layer for hybrid search (off by default). */
   embeddings: EmbeddingsConfig;
+  /** What `big-brain context` shows an agent at session start. */
+  context: ContextConfig;
+}
+
+export interface ContextConfig {
+  /** Hard cap on the context text, in characters (default 4000). */
+  maxChars: number;
+  /** Fallbacks for directories whose repository no note owns; the longest matching path wins. */
+  paths: ContextPathRule[];
+}
+
+export interface ContextPathRule {
+  /** Directory this rule covers, absolute or `~/…`; its subdirectories match too. */
+  path: string;
+  /** Notes (paths or titles) whose summaries are shown. */
+  notes?: string[];
+  /** Folder prefix whose active projects are listed; `""` lists every active project. */
+  projects?: string;
 }
 
 export interface EmbeddingsConfig {
