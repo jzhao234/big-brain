@@ -65,10 +65,13 @@ export function autoCommit(
     }
 
     const pathspecs = literalPathspecs(paths);
-    retryWhileLocked(() => {
-      git(vaultDir, ["add", "-A", "--", ...pathspecs]);
-      git(vaultDir, [...identity, "commit", "-q", "-m", message, "--only", "--", ...pathspecs]);
-    });
+    // Retried one step at a time: once `add` has staged an archive move, the
+    // source path is gone from both index and worktree, so re-running `add`
+    // after a locked commit would fail on an unmatched pathspec.
+    retryWhileLocked(() => git(vaultDir, ["add", "-A", "--", ...pathspecs]));
+    retryWhileLocked(() =>
+      git(vaultDir, [...identity, "commit", "-q", "-m", message, "--only", "--", ...pathspecs]),
+    );
 
     if (cfg.autoPush) pushInBackground(vaultDir);
   } catch (err) {
@@ -82,9 +85,10 @@ const LOCK_RETRY_DELAYS_MS = [100, 250, 500, 1000];
  * Run a git step, retrying while another git process holds the index lock
  * (a concurrent commit from a second agent, an editor's git plugin). Without
  * this, the second of two simultaneous writes left its note uncommitted.
- * Both steps are idempotent, so a retry after a partial run is safe.
+ * Git takes the lock before changing anything, so a locked step did nothing
+ * and can simply run again.
  */
-function retryWhileLocked(step: () => void): void {
+function retryWhileLocked(step: () => unknown): void {
   for (let attempt = 0; ; attempt++) {
     try {
       step();

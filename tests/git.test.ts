@@ -346,6 +346,37 @@ describe("index lock", () => {
     releaser.kill();
   });
 
+  it("commits an archive move when the lock appears between add and commit", () => {
+    enableAutoCommit();
+    const vault = new Vault(dir);
+    vault.createNote({ title: "Mover", body: "x" });
+    const before = commitCount();
+    // Right after `add` stages the move, take the lock for 0.3 s, as a second
+    // git process would, so it is the commit step that meets it.
+    const gitDir = path.join(dir, ".git");
+    const hook = path.join(gitDir, "hooks", "post-index-change");
+    fs.writeFileSync(
+      hook,
+      [
+        "#!/bin/sh",
+        `[ -e "${gitDir}/hooked" ] && exit 0`,
+        // Not yet: this index write is an earlier step (status refreshing it).
+        "git ls-files --error-unmatch archive/notes/Mover.md >/dev/null 2>&1 || exit 0",
+        `touch "${gitDir}/hooked"`,
+        `: > "${gitDir}/index.lock"`,
+        `(sleep 0.3; rm -f "${gitDir}/index.lock") >/dev/null 2>&1 &`,
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    vault.archiveNote("Mover");
+
+    expect(fs.existsSync(path.join(gitDir, "hooked"))).toBe(true);
+    expect(commitCount()).toBe(before + 1);
+    expect(committedPaths()).toEqual(["archive/notes/Mover.md", "notes/Mover.md"]);
+  });
+
   it("gives up on a lock that is never released and leaves the note saved", () => {
     enableAutoCommit();
     const vault = new Vault(dir);

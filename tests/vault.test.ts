@@ -817,5 +817,8 @@ describe("name ranking", () => {
     expect(note.path).toBe("brag/Fleet brag.md");
     expect(note.type).toBe("brag");
     expect(vault.createNote({ title: "Loose", type: "client" }).path).toBe("notes/Loose.md");
+    for (const type of ["constructor", "__proto__", "toString"]) {
+      expect(vault.createNote({ title: `T ${type}`, type }).path).toBe(`notes/T ${type}.md`);
+    }
   });
 });

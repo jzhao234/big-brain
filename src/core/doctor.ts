@@ -91,14 +91,16 @@ export function runDoctor(vault: Vault): DoctorFinding[] {
   // structure and are not flagged.
   for (const note of active) {
     const counts = new Map<string, { text: string; count: number }>();
-    const parents: Array<{ depth: number; key: string }> = [];
+    // Parents are identified by line, not text: two "## Log" sections are
+    // different parents even though they share a name.
+    const parents: Array<{ depth: number; line: number }> = [];
     for (const h of note.headings) {
       while (parents.length > 0 && parents[parents.length - 1]!.depth >= h.depth) parents.pop();
-      const key = `${parents.map((p) => p.key).join("\0")}\0${nameKey(h.text)}`;
+      const key = `${parents[parents.length - 1]?.line ?? -1}\0${nameKey(h.text)}`;
       const entry = counts.get(key) ?? { text: h.text, count: 0 };
       entry.count++;
       counts.set(key, entry);
-      parents.push({ depth: h.depth, key: nameKey(h.text) });
+      parents.push({ depth: h.depth, line: h.line });
     }
     for (const { text: h, count } of counts.values()) {
       if (count < 2) continue;

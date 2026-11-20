@@ -212,7 +212,9 @@ export class Vault {
       inbox: f.inbox,
       daily: f.daily,
     };
-    return map[type] ?? f.notes;
+    // Own keys only: `type` is caller-supplied, and "constructor" or
+    // "__proto__" would otherwise pick up an inherited Object property.
+    return Object.hasOwn(map, type) ? map[type]! : f.notes;
   }
 
   createNote(input: CreateNoteInput): Note {

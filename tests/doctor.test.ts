@@ -105,6 +105,19 @@ describe("link and heading ambiguity", () => {
     expect(dup[0]?.message).toContain('"Log" appears 2 times');
   });
 
+  it("counts sub-headings of two same-named parents separately", () => {
+    vault.createNote({
+      title: "Split",
+      body: "## Log\n\n### Impact\n\n## Log\n\n### Impact\n",
+    });
+
+    const dup = runDoctor(vault).filter((f) => f.rule === "duplicate-heading");
+
+    expect(dup.map((f) => f.message)).toEqual([
+      'Heading "Log" appears 2 times in the same section; appends under it go to the first one, so merge or rename the others',
+    ]);
+  });
+
   it("allows the same sub-heading under different parents", () => {
     vault.createNote({
       title: "Entries",
