@@ -33,8 +33,8 @@ export class Vault {
   readonly dir: string;
   readonly config: BrainConfig;
   private notesByPath = new Map<string, Note>();
-  /** name key (title, alias, filename stem) -> notes, best match first; rebuilt lazily. */
-  private nameIndex: Map<string, Note[]> | undefined;
+  /** name key (title, alias, filename stem) -> matches, best first; rebuilt lazily. */
+  private nameIndex: Map<string, NameMatch[]> | undefined;
   /** Per-path stat signature used to decide whether a file needs reparsing. */
   private signatures = new Map<string, string>();
   private index = new SearchIndex();
@@ -119,38 +119,51 @@ export class Vault {
 
   /**
    * Resolve a reference to a note: exact vault-relative path, then title,
-   * alias, or filename stem (case-insensitive). Returns undefined if absent;
-   * ambiguous name matches prefer non-archived, then shortest path.
+   * alias, or filename stem (case-insensitive). Returns undefined if absent.
+   * Ambiguous name matches prefer a title or alias over a bare filename stem,
+   * then non-archived, then the shortest path.
    */
   get(ref: string): Note | undefined {
-    const cleaned = toPosix(ref.trim()).replace(/^\.\//, "");
-    const byPath =
-      this.notesByPath.get(cleaned) ?? this.notesByPath.get(`${cleaned.replace(/\.md$/, "")}.md`);
-    if (byPath) return byPath;
-    return this.names().get(nameKey(cleaned.replace(/\.md$/, "")))?.[0];
+    return this.byPath(ref) ?? this.nameCandidates(ref)[0]?.note;
+  }
+
+  /**
+   * The name matches for a reference, best first; empty when the reference
+   * is an exact path (paths never tie) or names nothing. Lets callers such as
+   * doctor tell a clear match from a tie.
+   */
+  nameCandidates(ref: string): NameMatch[] {
+    if (this.byPath(ref)) return [];
+    const key = nameKey(cleanRef(ref).replace(/\.md$/, ""));
+    return [...(this.names().get(key) ?? [])];
+  }
+
+  private byPath(ref: string): Note | undefined {
+    const cleaned = cleanRef(ref);
+    return (
+      this.notesByPath.get(cleaned) ?? this.notesByPath.get(`${cleaned.replace(/\.md$/, "")}.md`)
+    );
   }
 
   /**
    * Name lookup table. get() runs inside link-resolution loops (backlinks,
    * doctor, related), so a linear scan per call made those quadratic or worse.
    */
-  private names(): Map<string, Note[]> {
+  private names(): Map<string, NameMatch[]> {
     if (this.nameIndex) return this.nameIndex;
-    const index = new Map<string, Note[]>();
+    const index = new Map<string, NameMatch[]>();
+    const add = (key: string, match: NameMatch) =>
+      index.set(key, [...(index.get(key) ?? []), match]);
     for (const note of this.notesByPath.values()) {
-      const keys = new Set([
-        nameKey(note.title),
-        nameKey(path.basename(note.path, ".md")),
-        ...note.aliases.map(nameKey),
-      ]);
-      for (const key of keys) index.set(key, [...(index.get(key) ?? []), note]);
+      const named = new Set([nameKey(note.title), ...note.aliases.map(nameKey)]);
+      for (const key of named) add(key, { note, by: "name" });
+      // A filename stem only counts when it isn't also the note's title or
+      // alias, so `brag/fleet.md` titled "Fleet brag sheet" can't take
+      // [[Fleet]] from `projects/Fleet.md` just by having the shorter path.
+      const stem = nameKey(path.basename(note.path, ".md"));
+      if (!named.has(stem)) add(stem, { note, by: "stem" });
     }
-    // Ambiguous names prefer non-archived, then shortest path.
-    for (const notes of index.values()) {
-      notes.sort(
-        (a, b) => Number(a.archived) - Number(b.archived) || a.path.length - b.path.length,
-      );
-    }
+    for (const matches of index.values()) matches.sort(compareMatches);
     this.nameIndex = index;
     return index;
   }
@@ -471,6 +484,31 @@ export class Vault {
     this.refresh();
     return this.notesByPath.get(posix);
   }
+}
+
+/** How a name reference matched a note: its title or an alias, or only its filename stem. */
+export interface NameMatch {
+  note: Note;
+  by: "name" | "stem";
+}
+
+/** Title or alias first, then non-archived, then shortest path, then path order (stable). */
+function compareMatches(a: NameMatch, b: NameMatch): number {
+  return (
+    Number(a.by === "stem") - Number(b.by === "stem") ||
+    Number(a.note.archived) - Number(b.note.archived) ||
+    a.note.path.length - b.note.path.length ||
+    (a.note.path < b.note.path ? -1 : a.note.path > b.note.path ? 1 : 0)
+  );
+}
+
+/** Same match rank: the reference can't tell these notes apart. */
+export function sameRank(a: NameMatch, b: NameMatch): boolean {
+  return a.by === b.by && a.note.archived === b.note.archived;
+}
+
+function cleanRef(ref: string): string {
+  return toPosix(ref.trim()).replace(/^\.\//, "");
 }
 
 const warned = new Set<string>();

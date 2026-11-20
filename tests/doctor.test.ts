@@ -62,3 +62,55 @@ describe("runDoctor", () => {
     expect(found[0]).toMatchObject({ path: "notes/Broken.md", severity: "warning" });
   });
 });
+
+describe("link and heading ambiguity", () => {
+  function write(rel: string, content: string): void {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), content);
+  }
+
+  it("warns once per note when a link only matches tied filename stems", () => {
+    write("a/fleet.md", "# Alpha sheet\n");
+    write("b/fleet.md", "# Beta sheet\n");
+    write("notes/Linker.md", "# Linker\n\n[[fleet]] and again [[Fleet]]\n");
+    vault.refresh();
+
+    const ambiguous = runDoctor(vault).filter((f) => f.rule === "ambiguous-link");
+
+    expect(ambiguous).toHaveLength(1);
+    expect(ambiguous[0]?.path).toBe("notes/Linker.md");
+    expect(ambiguous[0]?.message).toContain("a/fleet.md, b/fleet.md");
+    expect(ambiguous[0]?.message).toContain("resolves to a/fleet.md");
+  });
+
+  it("does not warn when a title settles the link", () => {
+    write("projects/Fleet.md", "# Fleet\n");
+    write("b/fleet.md", "# Fleet platform brag sheet\n");
+    write("notes/Linker.md", "# Linker\n\n[[Fleet]]\n");
+    vault.refresh();
+
+    expect(runDoctor(vault).filter((f) => f.rule === "ambiguous-link")).toEqual([]);
+  });
+
+  it("reports a repeated sibling heading once with its count", () => {
+    vault.createNote({
+      title: "Twice",
+      body: "## Log\n\n- one\n\n## Tasks\n\n## log\n\n- two\n\n```\n## Log\n```\n",
+    });
+
+    const dup = runDoctor(vault).filter((f) => f.rule === "duplicate-heading");
+
+    expect(dup).toHaveLength(1);
+    expect(dup[0]?.path).toBe("notes/Twice.md");
+    expect(dup[0]?.message).toContain('"Log" appears 2 times');
+  });
+
+  it("allows the same sub-heading under different parents", () => {
+    vault.createNote({
+      title: "Entries",
+      body: "## 2026-01-01 First\n\n### Impact\n\nA\n\n## 2026-02-01 Second\n\n### Impact\n\nB\n",
+    });
+
+    expect(runDoctor(vault).filter((f) => f.rule === "duplicate-heading")).toEqual([]);
+  });
+});

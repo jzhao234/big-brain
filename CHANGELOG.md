@@ -16,6 +16,13 @@ All notable changes to big-brain. The format follows [Keep a Changelog](https://
 
 - Antigravity (`agy`) support. `big-brain setup` registers the MCP server with `agy mcp add` and installs `/brain`, `/capture`, and `/weekly` into `~/.gemini/config/skills` when `agy` is on PATH (`--no-agy` skips it). It checks `agy mcp list` first and never registers when that fails, since `agy mcp add` overwrites a server of the same name.
 - `big-brain agents` manages an `agents/agy/` profile: `instructions.md` links to `~/.gemini/config/AGENTS.md`, skills and files link under `~/.gemini/config/`, and `settings.json` merges three ways into `~/.gemini/antigravity-cli/settings.json`.
+- `create_note` (MCP) accepts any note type and an optional `folder`, and `big-brain new` takes `--folder`. Built-in types still pick their folder; a custom type such as `brag` or `client` defaults to `notes/` unless a folder is given. Before, the MCP tool rejected every type outside six built-ins and had no way to choose a folder.
+- `big-brain doctor` checks three more things: `ambiguous-link` (a wikilink that only matches the filenames of several notes, such as two `fleet.md` in different folders), `duplicate-heading` (two sibling sections with the same heading, where appends only ever reach the first), and `uncommitted-changes` (files left uncommitted in an auto-commit vault).
+
+### Fixed
+
+- A wikilink now resolves to the note whose title or alias matches before a note that only shares its filename: `[[Fleet]]` reaches `projects/Fleet.md` (title "Fleet") rather than a shorter `brag/fleet.md` titled "Fleet brag sheet". After that, non-archived notes win, then shorter paths, then path order, so exact ties no longer depend on scan order.
+- Auto-commit retries for up to about two seconds while another git process holds the index lock. Before, the second of two simultaneous writes left its note saved but uncommitted.
 
 ## 0.3.2 (2026-10-14)
 

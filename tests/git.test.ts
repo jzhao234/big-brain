@@ -1,8 +1,9 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { runDoctor } from "../src/core/doctor.js";
 import { autoCommit, settlePushes } from "../src/core/git.js";
 import { initVault } from "../src/core/scaffold.js";
 import { addTask, completeTask } from "../src/core/tasks.js";
@@ -325,5 +326,51 @@ describe("background push", () => {
       encoding: "utf8",
     }).trim();
     expect(remote).toBe(local);
+  });
+});
+
+describe("index lock", () => {
+  it("retries a commit while another git process holds the index lock", () => {
+    enableAutoCommit();
+    const vault = new Vault(dir);
+    const before = commitCount();
+    const lock = path.join(dir, ".git", "index.lock");
+    fs.writeFileSync(lock, "");
+    // Released by another process while this one waits, as a concurrent git would.
+    const releaser = spawn("sh", ["-c", `sleep 0.3; rm -f "${lock}"`], { stdio: "ignore" });
+
+    vault.createNote({ title: "Locked Write", body: "saved while locked" });
+
+    expect(commitCount()).toBe(before + 1);
+    expect(committedPaths()).toEqual(["notes/Locked Write.md"]);
+    releaser.kill();
+  });
+
+  it("gives up on a lock that is never released and leaves the note saved", () => {
+    enableAutoCommit();
+    const vault = new Vault(dir);
+    const before = commitCount();
+    fs.writeFileSync(path.join(dir, ".git", "index.lock"), "");
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    vault.createNote({ title: "Stuck Write", body: "kept on disk" });
+
+    expect(commitCount()).toBe(before);
+    expect(fs.existsSync(path.join(dir, "notes", "Stuck Write.md"))).toBe(true);
+    expect(errors.mock.calls.flat().join("\n")).toContain("index.lock");
+    fs.rmSync(path.join(dir, ".git", "index.lock"));
+    const dirty = runDoctor(new Vault(dir)).filter((f) => f.rule === "uncommitted-changes");
+    expect(dirty).toHaveLength(1);
+    expect(dirty[0]?.message).toContain("notes/Stuck Write.md");
+  });
+
+  it("reports nothing uncommitted after normal writes, or when auto-commit is off", () => {
+    enableAutoCommit();
+    new Vault(dir).createNote({ title: "Clean", body: "x" });
+    expect(runDoctor(new Vault(dir)).some((f) => f.rule === "uncommitted-changes")).toBe(false);
+
+    writeConfig(false);
+    fs.writeFileSync(path.join(dir, "notes", "Hand.md"), "# Hand\n");
+    expect(runDoctor(new Vault(dir)).some((f) => f.rule === "uncommitted-changes")).toBe(false);
   });
 });

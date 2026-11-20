@@ -65,13 +65,65 @@ export function autoCommit(
     }
 
     const pathspecs = literalPathspecs(paths);
-    git(vaultDir, ["add", "-A", "--", ...pathspecs]);
-    git(vaultDir, [...identity, "commit", "-q", "-m", message, "--only", "--", ...pathspecs]);
+    retryWhileLocked(() => {
+      git(vaultDir, ["add", "-A", "--", ...pathspecs]);
+      git(vaultDir, [...identity, "commit", "-q", "-m", message, "--only", "--", ...pathspecs]);
+    });
 
     if (cfg.autoPush) pushInBackground(vaultDir);
   } catch (err) {
     warn(`auto-commit skipped: ${errText(err)}`);
   }
+}
+
+const LOCK_RETRY_DELAYS_MS = [100, 250, 500, 1000];
+
+/**
+ * Run a git step, retrying while another git process holds the index lock
+ * (a concurrent commit from a second agent, an editor's git plugin). Without
+ * this, the second of two simultaneous writes left its note uncommitted.
+ * Both steps are idempotent, so a retry after a partial run is safe.
+ */
+function retryWhileLocked(step: () => void): void {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      step();
+      return;
+    } catch (err) {
+      const delay = LOCK_RETRY_DELAYS_MS[attempt];
+      if (delay === undefined || !errText(err).includes("index.lock")) throw err;
+      sleepSync(delay);
+    }
+  }
+}
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Files under the vault with uncommitted changes (modified, staged, or
+ * untracked), as repository-relative paths (the vault may be a subfolder of
+ * its repository). Empty when the vault isn't a git repo or git fails.
+ */
+export function uncommittedFiles(vaultDir: string): string[] {
+  let out: string;
+  try {
+    if (!isGitRepo(vaultDir)) return [];
+    out = git(vaultDir, ["status", "--porcelain", "-z", "--untracked-files=all", "--", "."]);
+  } catch {
+    return [];
+  }
+  const fields = out.split("\0");
+  const paths: string[] = [];
+  for (let i = 0; i < fields.length; i++) {
+    const entry = fields[i]!;
+    if (entry.length < 4) continue;
+    paths.push(entry.slice(3));
+    // Renames and copies carry the original path as an extra field.
+    if (/^[RC]|^.[RC]/.test(entry)) i++;
+  }
+  return paths;
 }
 
 /** Per vault: the push in flight, and whether another commit landed meanwhile. */

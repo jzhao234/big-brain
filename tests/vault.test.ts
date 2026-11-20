@@ -762,3 +762,60 @@ describe("appending after an unclosed code fence", () => {
     );
   });
 });
+
+describe("name ranking", () => {
+  function write(rel: string, content: string): void {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), content);
+  }
+
+  it("prefers a title over a shorter path that only matches by filename", () => {
+    write("projects/Fleet.md", "# Fleet\n");
+    write("b/fleet.md", "# Fleet platform brag sheet\n\n[[Fleet]]\n");
+    vault.refresh();
+
+    expect(vault.get("Fleet")?.path).toBe("projects/Fleet.md");
+    expect(vault.get("fleet")?.path).toBe("projects/Fleet.md");
+    expect(vault.backlinks("projects/Fleet.md").map((n) => n.path)).toEqual(["b/fleet.md"]);
+  });
+
+  it("prefers an alias over a filename stem", () => {
+    write("projects/Wave Project.md", "---\naliases: [Wavebend]\n---\n# Wave Project\n");
+    write("b/wavebend.md", "# Wave brag sheet\n");
+    vault.refresh();
+
+    expect(vault.get("Wavebend")?.path).toBe("projects/Wave Project.md");
+  });
+
+  it("still resolves a filename stem when no title or alias matches", () => {
+    write("b/fleet.md", "# Fleet platform brag sheet\n");
+    vault.refresh();
+
+    expect(vault.get("fleet")?.path).toBe("b/fleet.md");
+    expect(vault.nameCandidates("fleet").map((c) => c.by)).toEqual(["stem"]);
+  });
+
+  it("breaks exact ties by path so the winner doesn't depend on scan order", () => {
+    write("zz/same.md", "# One\n");
+    write("aa/same.md", "# Two\n");
+    vault.refresh();
+
+    expect(vault.get("same")?.path).toBe("aa/same.md");
+  });
+
+  it("returns no name candidates for an exact path", () => {
+    write("b/fleet.md", "# Fleet platform brag sheet\n");
+    vault.refresh();
+
+    expect(vault.nameCandidates("b/fleet.md")).toEqual([]);
+    expect(vault.nameCandidates("b/fleet")).toEqual([]);
+  });
+
+  it("creates a note of a custom type in an explicit folder", () => {
+    const note = vault.createNote({ title: "Fleet brag", type: "brag", folder: "brag" });
+
+    expect(note.path).toBe("brag/Fleet brag.md");
+    expect(note.type).toBe("brag");
+    expect(vault.createNote({ title: "Loose", type: "client" }).path).toBe("notes/Loose.md");
+  });
+});

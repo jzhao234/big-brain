@@ -100,3 +100,23 @@ describe("CLI tasks", () => {
     await expect(run(["--due-by", "2026-1-5"])).rejects.toThrow("CLI exited");
   });
 });
+
+describe("MCP create_note", () => {
+  it("accepts a custom type and an explicit folder", async () => {
+    const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+    await buildServer(vault).connect(serverSide);
+    const client = new Client({ name: "test", version: "1.0.0" });
+    await client.connect(clientSide);
+
+    const result = await client.callTool({
+      name: "create_note",
+      arguments: { title: "Infra wins", type: "brag", folder: "brag", body: "[[BRAIN]]" },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(JSON.stringify(result.content)).toContain("Created brag/Infra wins.md");
+    vault.refresh();
+    expect(vault.get("Infra wins")?.type).toBe("brag");
+    await client.close();
+  });
+});
