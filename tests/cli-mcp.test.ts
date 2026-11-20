@@ -66,6 +66,59 @@ describe("MCP lookups", () => {
   });
 });
 
+describe("edit_note", () => {
+  it("edits through MCP and reports a failed match as a tool error", async () => {
+    fs.writeFileSync(path.join(dir, "notes", "E.md"), "# E\n\nStatus: draft\n");
+    vault.refresh();
+    const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+    await buildServer(vault).connect(serverSide);
+    const client = new Client({ name: "test", version: "1.0.0" });
+    await client.connect(clientSide);
+    const ok = await client.callTool({
+      name: "edit_note",
+      arguments: { ref: "E", old_text: "Status: draft", new_text: "Status: sent" },
+    });
+    expect(JSON.stringify(ok.content)).toContain("Edited notes/E.md (1 replacement)");
+    const miss = await client.callTool({
+      name: "edit_note",
+      arguments: { ref: "E", old_text: "Status: draft", new_text: "x" },
+    });
+    expect(miss.isError).toBe(true);
+    expect(fs.readFileSync(path.join(dir, "notes", "E.md"), "utf8")).toBe("# E\n\nStatus: sent\n");
+    await client.close();
+  });
+
+  it("edits through the CLI", async () => {
+    fs.writeFileSync(path.join(dir, "notes", "E.md"), "# E\n\na b a\n");
+    vi.resetModules();
+    const { Command } = await import("commander");
+    const parse = vi.spyOn(Command.prototype, "parseAsync").mockImplementation(async function (
+      this: InstanceType<typeof Command>,
+    ) {
+      return this;
+    });
+    await import("../src/cli/index.js");
+    const program = parse.mock.instances[0] as unknown as InstanceType<typeof Command>;
+    parse.mockRestore();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    await program.parseAsync([
+      "node",
+      "big-brain",
+      "--vault",
+      dir,
+      "edit",
+      "E",
+      "--old",
+      "a",
+      "--new",
+      "c",
+      "--all",
+    ]);
+    expect(log.mock.calls.flat().join("\n")).toContain("Edited notes/E.md (2 replacements)");
+    expect(fs.readFileSync(path.join(dir, "notes", "E.md"), "utf8")).toBe("# E\n\nc b c\n");
+  });
+});
+
 describe("CLI tasks", () => {
   async function run(args: string[]) {
     vi.resetModules();

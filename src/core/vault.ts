@@ -362,6 +362,49 @@ export class Vault {
     });
   }
 
+  /**
+   * Replace an exact passage of a note's body, leaving every other byte as it
+   * was. `oldText` must occur exactly once unless `replaceAll` is set, so a
+   * stale or ambiguous edit fails instead of landing in the wrong place. The
+   * frontmatter block is never touched (use updateFrontmatter), which also
+   * keeps this working on a note whose YAML doesn't parse.
+   */
+  editNote(
+    ref: string,
+    oldText: string,
+    newText: string,
+    replaceAll = false,
+  ): { note: Note; replacements: number } {
+    const target = toLF(oldText);
+    const replacement = toLF(newText);
+    if (target === "") throw new Error("old_text is empty: copy the exact passage to replace");
+    if (target === replacement) throw new Error("old_text and new_text are the same");
+    let replacements = 0;
+    const note = this.mutateNote(ref, "edit", (note) => {
+      const lines = note.raw.split("\n");
+      const head = lines.slice(0, note.bodyLine).join("\n");
+      const body = lines.slice(note.bodyLine).join("\n");
+      const parts = body.split(target);
+      const count = parts.length - 1;
+      if (count === 0) {
+        throw new Error(
+          `old_text not found in the body of ${note.path}; read the note and copy the passage exactly (frontmatter is edited with update_frontmatter)`,
+        );
+      }
+      if (count > 1 && !replaceAll) {
+        throw new Error(
+          `old_text occurs ${count} times in ${note.path}; include more surrounding text so it matches once, or set replace_all`,
+        );
+      }
+      replacements = replaceAll ? count : 1;
+      const edited = replaceAll
+        ? parts.join(replacement)
+        : `${parts[0]}${replacement}${parts.slice(1).join(target)}`;
+      return note.bodyLine > 0 ? `${head}\n${edited}` : edited;
+    });
+    return { note, replacements };
+  }
+
   /** Replace a note's body (frontmatter preserved). */
   replaceBody(ref: string, body: string): Note {
     return this.mutateNote(ref, "rewrite", (note) => {
