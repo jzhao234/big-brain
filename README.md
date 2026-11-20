@@ -154,7 +154,7 @@ The whole point is that you never re-feed context. The assistant **loads** a sma
 
 `big-brain context` prints what an agent should know about the directory it starts in, so a session-start hook can hand it over without anyone remembering to look:
 
-1. **The repository's own note.** The directory's git remote is matched against `repos:` in note frontmatter, by its full path (`owner/repo`, or `group/sub/repo`); prefix an entry with its host (`gitlab.example.com/group/repo`) when the same path exists on two hosts. Exactly one owning note is loaded: its `## Summary` section (or the text before its first section), status, and open tasks. Notes that list the repo under `related_repos:` are named, not loaded. If two notes claim the same repo, none is loaded and `doctor` reports it, so one client's notes never leak into another's session.
+1. **The repository's own note.** The directory's git remote is matched against `repos:` in note frontmatter, by its full path (`owner/repo`, or `group/sub/repo`); write an entry as a URL (`https://gitlab.example.com/group/repo`) to pin its host when the same path exists on two hosts. Exactly one owning note is loaded: its `## Summary` section (or the text before its first section), status, and open tasks. Notes that list the repo under `related_repos:` are named, not loaded. If two notes claim the same repo, none is loaded and `doctor` reports it, so one client's notes never leak into another's session.
 2. **A path rule.** Otherwise the longest matching rule in `brain.config.json` decides: which notes to summarize and which folder's active projects to list.
 3. **The active projects**, when nothing else matches.
 

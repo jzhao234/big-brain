@@ -60,7 +60,8 @@ describe("parseRepo", () => {
     ],
     ["owner/repo", { path: "owner/repo" }],
     ["group/sub/repo", { path: "group/sub/repo" }],
-    ["gitlab.example.com/group/repo", { host: "gitlab.example.com", path: "group/repo" }],
+    ["client.a/team/app", { path: "client.a/team/app" }],
+    ["https://gitlab.example.com/group/repo", { host: "gitlab.example.com", path: "group/repo" }],
   ])("%s", (input, ref) => {
     expect(parseRepo(input)).toEqual(ref);
   });
@@ -78,8 +79,10 @@ describe("parseRepo", () => {
     expect(sameRepo(a, b)).toBe(false);
     const gh = parseRepo("git@github.com:acme/widget.git")!;
     expect(sameRepo(gh, parseRepo("acme/widget")!)).toBe(true);
-    expect(sameRepo(gh, parseRepo("github.com/acme/widget")!)).toBe(true);
-    expect(sameRepo(gh, parseRepo("gitlab.com/acme/widget")!)).toBe(false);
+    expect(sameRepo(gh, parseRepo("https://github.com/acme/widget")!)).toBe(true);
+    expect(sameRepo(gh, parseRepo("https://gitlab.com/acme/widget")!)).toBe(false);
+    const dotted = parseRepo("https://git.example/client.a/team/app.git")!;
+    expect(sameRepo(dotted, parseRepo("client.a/team/app")!)).toBe(true);
   });
 });
 
@@ -157,8 +160,8 @@ describe("sessionContext", () => {
   });
 
   it("treats the same path on two named hosts as two repositories", () => {
-    write("notes/Gh.md", "---\nrepos: [github.com/acme/widget]\n---\n# Gh\n");
-    write("notes/Gl.md", "---\nrepos: [gitlab.com/acme/widget]\n---\n# Gl\n");
+    write("notes/Gh.md", "---\nrepos: ['https://github.com/acme/widget']\n---\n# Gh\n");
+    write("notes/Gl.md", "---\nrepos: ['https://gitlab.com/acme/widget']\n---\n# Gl\n");
     expect(runDoctor(new Vault(dir)).some((f) => f.rule === "shared-repo")).toBe(false);
 
     write("notes/Any.md", "---\nrepos: [acme/widget]\n---\n# Any\n");

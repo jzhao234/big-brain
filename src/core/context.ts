@@ -62,9 +62,10 @@ const SEGMENT = /^[\w.-]+$/;
 /**
  * Parse a git remote or a frontmatter entry: `git@github.com:Owner/Repo.git`,
  * `github.com:owner/repo`, `https://github.com/owner/repo`,
- * `ssh://git@host:2222/owner/repo.git`, `owner/repo`, and
- * `gitlab.example.com/group/sub/repo` (a first segment with a dot, followed
- * by at least two more, is read as the host).
+ * `ssh://git@host:2222/owner/repo.git`, or a plain path (`owner/repo`,
+ * `group/sub/repo`). A plain path never carries a host, since group names
+ * may contain dots; write the entry as a URL to pin one. Ports are not part
+ * of the identity: one service's SSH and HTTPS ports differ.
  */
 export function parseRepo(input: string): RepoRef | undefined {
   const s = input
@@ -88,11 +89,7 @@ export function parseRepo(input: string): RepoRef | undefined {
     host = scp[1];
     pathname = scp[2]!;
   } else pathname = s;
-  let parts = pathname.split("/").filter(Boolean);
-  if (host === undefined && parts.length >= 3 && parts[0]!.includes(".")) {
-    host = parts[0];
-    parts = parts.slice(1);
-  }
+  const parts = pathname.split("/").filter(Boolean);
   // Plain words only: anything else (spaces, "..", a stray colon) means the
   // input was not a repository reference.
   if (parts.length < 2 || !parts.every((p) => SEGMENT.test(p) && p !== "." && p !== "..")) {
