@@ -343,6 +343,26 @@ program
   });
 
 program
+  .command("edit <ref>")
+  .description("replace an exact passage of a note's body (it must match once unless --all)")
+  .requiredOption("--old <text>", "the exact passage to replace")
+  .requiredOption("--new <text>", "the text to put in its place ('' deletes it)")
+  .option("--all", "replace every occurrence")
+  .action((ref: string, opts: { old: string; new: string; all?: boolean }) => {
+    try {
+      const vault = openVault();
+      const { note, replacements } = vault.editNote(ref, opts.old, opts.new, opts.all);
+      console.log(
+        pc.green(
+          `Edited ${note.path} (${replacements} replacement${replacements === 1 ? "" : "s"})`,
+        ),
+      );
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+program
   .command("frontmatter <ref> <assignments...>")
   .description("set frontmatter keys: key=value (read as YAML); key=null removes the key")
   .action((ref: string, assignments: string[]) => {

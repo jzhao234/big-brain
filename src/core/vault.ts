@@ -362,6 +362,55 @@ export class Vault {
     });
   }
 
+  /**
+   * Replace an exact passage of a note's body, leaving the rest of the file as
+   * it was (a file mixing CRLF and LF still gets its line endings normalized,
+   * as every write does). `oldText` must occur exactly once, overlapping
+   * occurrences included, unless `replaceAll` is set, so a stale or ambiguous
+   * edit fails instead of landing in the wrong place. The frontmatter block is
+   * never touched (use updateFrontmatter), which also keeps this working on a
+   * note whose YAML doesn't parse.
+   */
+  editNote(
+    ref: string,
+    oldText: string,
+    newText: string,
+    replaceAll = false,
+  ): { note: Note; replacements: number } {
+    const target = toLF(oldText);
+    const replacement = toLF(newText);
+    if (target === "") throw new Error("old_text is empty: copy the exact passage to replace");
+    if (target === replacement) throw new Error("old_text and new_text are the same");
+    let replacements = 0;
+    const note = this.mutateNote(ref, "edit", (note) => {
+      // parseNote reads the file through toLF once, as mutateNote does, so the
+      // parsed body is a suffix of `raw`: splitting there never puts any of the
+      // frontmatter block (even a closing `---` with no newline) in `body`.
+      const body = note.body;
+      if (!note.raw.endsWith(body)) throw new Error(`Could not locate the body of ${note.path}`);
+      const head = note.raw.slice(0, note.raw.length - body.length);
+      const parts = body.split(target);
+      let count = 0;
+      for (let at = body.indexOf(target); at !== -1; at = body.indexOf(target, at + 1)) count++;
+      if (count === 0) {
+        throw new Error(
+          `old_text not found in the body of ${note.path}; read the note and copy the passage exactly (frontmatter is edited with update_frontmatter)`,
+        );
+      }
+      if (count > 1 && !replaceAll) {
+        throw new Error(
+          `old_text occurs ${count} times in ${note.path}; include more surrounding text so it matches once, or set replace_all`,
+        );
+      }
+      replacements = replaceAll ? parts.length - 1 : 1;
+      const edited = replaceAll
+        ? parts.join(replacement)
+        : `${parts[0]}${replacement}${parts.slice(1).join(target)}`;
+      return `${head}${edited}`;
+    });
+    return { note, replacements };
+  }
+
   /** Replace a note's body (frontmatter preserved). */
   replaceBody(ref: string, body: string): Note {
     return this.mutateNote(ref, "rewrite", (note) => {

@@ -2,6 +2,12 @@
 
 All notable changes to big-brain. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/) (below 1.0, a minor version may change behavior).
 
+## Unreleased
+
+### Added
+
+- `edit_note` (MCP) and `big-brain edit <note> --old … --new …` replace one exact passage of a note's body and leave the rest of the note as it was. The passage must match exactly once, overlapping matches included (`replace_all` / `--all` replaces every match), so a stale or ambiguous edit fails instead of landing in the wrong place. It never touches the frontmatter (use `update_frontmatter`) and works on a note whose YAML doesn't parse. Before, changing existing text meant `replace_note_body`, which has the agent retype the whole note, a risk of silently dropping facts in a long note.
+
 ## 0.4.0 (2026-11-20)
 
 ### Changed

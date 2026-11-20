@@ -87,7 +87,7 @@ Unknown keys are preserved and shown; you can add your own.
 
 The block must start on the first line (a leading UTF-8 BOM is fine) and both delimiters must be lines of exactly `---` (trailing spaces allowed). A note that opens with `---` but never closes it has no frontmatter: the line is read as a horizontal rule and everything stays body. Frontmatter is always YAML and must be a mapping of `key: value` lines; dates such as `2026-01-05` stay strings.
 
-If the block exists but isn't valid YAML, the note still loads (its metadata reads as empty) and appends and task edits still work, but `update_frontmatter`, `replace_note_body`, and `set_project_status` refuse with the parse error instead of rewriting the note and losing the block. Fix the YAML, then retry. `vault_health` / `big-brain doctor` lists non-archived notes whose frontmatter didn't parse, and `read_note` shows the error and the raw block.
+If the block exists but isn't valid YAML, the note still loads (its metadata reads as empty) and appends, `edit_note` and task edits still work, but `update_frontmatter`, `replace_note_body`, and `set_project_status` refuse with the parse error instead of rewriting the note and losing the block. Fix the YAML, then retry. `vault_health` / `big-brain doctor` lists non-archived notes whose frontmatter didn't parse, and `read_note` shows the error and the raw block.
 
 ## Links, tags, titles
 

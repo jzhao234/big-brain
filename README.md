@@ -34,7 +34,7 @@ claude mcp add --scope user big-brain -- big-brain-mcp --vault ~/brain
 ## What you get
 
 - **Plain markdown files.** No database and no lock-in. Open the vault in Obsidian, grep it, or put it in git.
-- **An MCP server with 23 tools:** search, capture, daily logs, projects, tasks, the link graph, related notes, and a vault health check.
+- **An MCP server with 24 tools:** search, capture, daily logs, projects, tasks, the link graph, related notes, and a vault health check.
 - **A CLI for humans:** `big-brain status`, `big-brain capture`, `big-brain tasks`, and more.
 - **Skills for Claude Code, Codex, and Antigravity** (`/brain`, `/capture`, `/weekly`), installed with one command.
 - **Projects as the unit of work.** Each project is one file with a goal, checkbox tasks, and a running log.
@@ -107,7 +107,7 @@ agy mcp list           # expect: big-brain  stdio  enabled  ...
 
 **Other local MCP clients:** any client that speaks MCP over stdio works the same way. For clients without MCP, the CLI's `--json` output makes the vault scriptable.
 
-**Remote MCP preview:** Big Brain can expose the same 23 tools through an authenticated Streamable HTTP endpoint:
+**Remote MCP preview:** Big Brain can expose the same 24 tools through an authenticated Streamable HTTP endpoint:
 
 ```bash
 export BIG_BRAIN_MCP_TOKEN="$(openssl rand -hex 32)"
@@ -145,6 +145,7 @@ The whole point is that you never re-feed context. The assistant **loads** a sma
 | Finish a task | *"mark that done"* | `big-brain task done <id>` |
 | Start a project | *"new project: …"* | `big-brain project new "…"` |
 | Add to a note | *"add that to the Auth note's Log"* | `big-brain append "Auth" --heading Log -- "- …"` |
+| Fix a passage | *"Auth's summary is out of date, fix it"* | `big-brain edit "Auth" --old "…" --new "…"` |
 | Change metadata | *"set Auth's due date to …"* | `big-brain frontmatter "Auth" due=2026-11-01` |
 | Retire a note | *"archive that note"* | `big-brain archive "Auth"` |
 
@@ -293,7 +294,7 @@ Notes are markdown + YAML frontmatter (`type`, `tags`, `status`, `due`…). Task
 | `brain_overview` | Orient: active projects, due/overdue tasks, inbox, recent notes |
 | `search_notes` | Full-text search with type/tag/folder/status filters |
 | `read_note` / `list_notes` | Read by path, title, or alias; browse by folder/type/tag |
-| `create_note` / `append_note` / `replace_note_body` | Write notes (append is the safe default) |
+| `create_note` / `append_note` / `edit_note` / `replace_note_body` | Write notes (append is the safe default; `edit_note` changes one exact passage, in a note of any size) |
 | `update_frontmatter` / `archive_note` | Metadata changes; non-destructive delete |
 | `capture` | Quick capture to inbox |
 | `daily_note` / `daily_log` | Daily notes and timestamped work journal |
@@ -319,6 +320,7 @@ big-brain capture <text>        quick capture           big-brain doctor
 big-brain daily [--log "..."]   daily note / journal    big-brain index [--status|--rebuild]
 big-brain append <note> <text>  append [--heading H]    big-brain frontmatter <note> k=v ...
 big-brain archive <note>        archive (non-destructive delete)
+big-brain edit <note> --old T --new T   replace one exact passage (--all for every match)
 big-brain agents status|install|save   agent setup from the vault (see Agent profiles)
 big-brain install-skills        add Claude Code skills  big-brain mcp   run the MCP server
 ```

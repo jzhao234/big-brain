@@ -224,11 +224,36 @@ export function buildServer(vault: Vault): McpServer {
   );
 
   server.registerTool(
+    "edit_note",
+    {
+      title: "Edit a passage in a note",
+      description:
+        "Replace one exact passage of a note's body with new text; the rest of the note stays as it was. old_text must appear exactly once (copy it from read_note, with enough surrounding words to be unique) unless replace_all is set. The safe way to correct or update existing text, in a note of any size; prefer it to replace_note_body.",
+      inputSchema: {
+        ref: z.string().describe("Note path, title, or alias"),
+        old_text: z.string().describe("The exact passage to replace, copied from the note's body"),
+        new_text: z.string().describe("The text to put in its place (may be empty to delete it)"),
+        replace_all: z
+          .boolean()
+          .optional()
+          .describe("Replace every occurrence instead of requiring exactly one"),
+      },
+    },
+    async ({ ref, old_text, new_text, replace_all }) =>
+      fresh(() => {
+        const { note, replacements } = vault.editNote(ref, old_text, new_text, replace_all);
+        return text(
+          `Edited ${note.path} (${replacements} replacement${replacements === 1 ? "" : "s"})`,
+        );
+      }),
+  );
+
+  server.registerTool(
     "replace_note_body",
     {
       title: "Replace a note's body",
       description:
-        "Rewrite a note's entire body (frontmatter preserved). Prefer append_note for additions; use this only for deliberate rewrites/reorganizations.",
+        "Rewrite a note's entire body (frontmatter preserved). Prefer append_note for additions and edit_note for changing existing text; use this only for deliberate rewrites/reorganizations.",
       inputSchema: {
         ref: z.string().describe("Note path, title, or alias"),
         body: z.string().describe("New markdown body"),

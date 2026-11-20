@@ -491,6 +491,95 @@ describe("frontmatter and section boundaries", () => {
     expect(read("notes/Fence.md")).toMatch(/## Next\n\n## a comment\n\nmade\n$/);
   });
 
+  describe("editNote", () => {
+    const note =
+      "---\ntype: project\nstatus: active\n---\n\n# P\n\n## Summary\n\nShips in 0.3.\n\n## Log\n\n- 2026-11-01: 0.3 planned\n";
+
+    it("replaces one exact passage and leaves every other byte alone", () => {
+      write("notes/P.md", note);
+      const { note: edited, replacements } = vault.editNote(
+        "P",
+        "Ships in 0.3.",
+        "Shipped 0.4 ($& stays literal).",
+      );
+      expect(replacements).toBe(1);
+      expect(edited.path).toBe("notes/P.md");
+      expect(read("notes/P.md")).toBe(
+        note.replace("Ships in 0.3.", () => "Shipped 0.4 ($& stays literal)."),
+      );
+    });
+
+    it("refuses a missing, ambiguous, empty or no-op edit and writes nothing", () => {
+      write("notes/P.md", note);
+      expect(() => vault.editNote("P", "Ships in 0.9.", "x")).toThrow(
+        /not found in the body of notes\/P.md/,
+      );
+      expect(() => vault.editNote("P", "0.3", "0.4")).toThrow(/occurs 2 times/);
+      expect(() => vault.editNote("P", "", "x")).toThrow(/old_text is empty/);
+      expect(() => vault.editNote("P", "Ships", "Ships")).toThrow(/the same/);
+      expect(() => vault.editNote("missing", "a", "b")).toThrow(/Note not found/);
+      expect(read("notes/P.md")).toBe(note);
+    });
+
+    it("replaces every occurrence with replaceAll", () => {
+      write("notes/P.md", note);
+      expect(vault.editNote("P", "0.3", "0.4", true).replacements).toBe(2);
+      expect(read("notes/P.md")).toBe(note.replaceAll("0.3", "0.4"));
+    });
+
+    it("never edits the frontmatter, even when the text only appears there", () => {
+      write("notes/P.md", note);
+      expect(() => vault.editNote("P", "status: active", "status: done")).toThrow(
+        /update_frontmatter/,
+      );
+      expect(read("notes/P.md")).toBe(note);
+    });
+
+    it("edits the body of a note whose YAML doesn't parse, keeping the block as is", () => {
+      const raw = "---\ntags: [broken\n---\nbody line\n";
+      write("notes/Broken.md", raw);
+      vault.editNote("notes/Broken.md", "body line", "fixed line");
+      expect(read("notes/Broken.md")).toBe("---\ntags: [broken\n---\nfixed line\n");
+    });
+
+    it("matches CRLF input and keeps a CRLF note CRLF", () => {
+      write("notes/Win.md", "# Win\r\n\r\nline one\r\nline two\r\n");
+      vault.editNote("notes/Win.md", "line one\r\nline two", "lines one and two");
+      expect(read("notes/Win.md")).toBe("# Win\r\n\r\nlines one and two\r\n");
+    });
+
+    it("never exposes the closing delimiter of a frontmatter-only note without a newline", () => {
+      write("notes/Fm.md", "---\ntype: project\n---");
+      expect(() => vault.editNote("notes/Fm.md", "---", "")).toThrow(/not found in the body/);
+      expect(read("notes/Fm.md")).toBe("---\ntype: project\n---");
+    });
+
+    it("counts overlapping occurrences as ambiguous", () => {
+      write("notes/Fruit.md", "# Fruit\n\nbanana\n");
+      expect(() => vault.editNote("Fruit", "ana", "x")).toThrow(/occurs 2 times/);
+      expect(vault.editNote("Fruit", "ana", "x", true).replacements).toBe(1);
+      expect(read("notes/Fruit.md")).toBe("# Fruit\n\nbxna\n");
+    });
+
+    it("keeps a BOM and the frontmatter bytes as they were", () => {
+      write("notes/Bom.md", "\ufeff---\ntype: note\n---\nold\n");
+      vault.editNote("notes/Bom.md", "old", "new");
+      expect(read("notes/Bom.md")).toBe("\ufeff---\ntype: note\n---\nnew\n");
+    });
+
+    it("edits in place after a stray carriage return (normalized like every write)", () => {
+      write("notes/Cr.md", "# Cr\r\n\r\nold\r\r\n");
+      vault.editNote("notes/Cr.md", "old", "new");
+      expect(read("notes/Cr.md")).toBe("# Cr\r\n\r\nnew\r\n");
+    });
+
+    it("edits a note with no frontmatter", () => {
+      write("notes/Plain.md", "# Plain\n\nold\n");
+      vault.editNote("Plain", "old", "new");
+      expect(read("notes/Plain.md")).toBe("# Plain\n\nnew\n");
+    });
+  });
+
   it("refuses to rewrite the body or frontmatter of a note whose YAML doesn't parse", () => {
     const raw = "---\ntags: [broken\n---\nbody\n";
     write("notes/Broken.md", raw);
