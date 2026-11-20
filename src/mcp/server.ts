@@ -154,14 +154,23 @@ export function buildServer(vault: Vault): McpServer {
     {
       title: "Create a note",
       description:
-        "Create a markdown note. type decides the folder (note→notes/, project→projects/, person→people/, reference→reference/, area→areas/). Use [[wikilinks]] in the body to connect it to related notes — always link generously.",
+        "Create a markdown note. type decides the default folder (note→notes/, project→projects/, person→people/, reference→reference/, area→areas/, inbox→inbox/; any other type→notes/); folder overrides it. Use [[wikilinks]] in the body to connect it to related notes — always link generously.",
       inputSchema: {
         title: z.string().describe("Note title (becomes the filename)"),
         body: z.string().optional().describe("Markdown body; use [[wikilinks]] to related notes"),
         type: z
-          .enum(["note", "project", "person", "reference", "area", "inbox"])
+          .string()
+          .min(1)
           .optional()
-          .describe("Note type (default 'note')"),
+          .describe(
+            "Note type written to frontmatter (default 'note'); built-in types also pick the folder, custom ones (e.g. 'brag', 'client') default to notes/",
+          ),
+        folder: z
+          .string()
+          .optional()
+          .describe(
+            "Vault-relative folder to create the note in, e.g. 'brag'; overrides the type's folder",
+          ),
         tags: z.array(z.string()).optional().describe("Tags without #"),
         frontmatter: z
           .record(z.string(), z.unknown())

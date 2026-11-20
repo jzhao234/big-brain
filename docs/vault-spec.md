@@ -89,7 +89,7 @@ If the block exists but isn't valid YAML, the note still loads (its metadata rea
 
 ## Links, tags, titles
 
-- **Wikilinks**: `[[Note Title]]`, `[[Note Title|shown text]]`, `[[Note Title#Heading]]`. Targets resolve against titles, aliases, and filename stems, case-insensitively. Ambiguity prefers non-archived notes, then shorter paths, but keep names unique (the doctor flags duplicates).
+- **Wikilinks**: `[[Note Title]]`, `[[Note Title|shown text]]`, `[[Note Title#Heading]]`. Targets resolve against titles, aliases, and filename stems, case-insensitively. Ambiguity prefers a title or alias match over a filename-only match, then non-archived notes, then shorter paths, but keep names unique (the doctor flags duplicate titles and links that only match several filenames).
 - **Tags**: inline `#tag` (letters, digits, `/`, `-`, `_`; must start with a letter) or frontmatter `tags:`. Compared lowercase.
 - **Code is ignored**: links, tags, and headings inside fenced code blocks (fences of three or more backticks or tildes, closed only by a fence of the same character at least as long) or inline code don't count, and neither do task lines inside fences, so a `# comment` in a shell snippet is never mistaken for a section. A fence left open runs to the end of the note; appends close it first. (Task metadata is read from the whole task line, including any inline code on it.)
 - **A note's title** is frontmatter `title` if set, else the first `# H1`, else the filename stem.

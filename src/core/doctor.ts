@@ -1,7 +1,8 @@
+import { uncommittedFiles } from "./git.js";
 import { projectStatus } from "./projects.js";
 import type { DoctorFinding } from "./types.js";
 import { nameKey, todayISO } from "./util.js";
-import type { Vault } from "./vault.js";
+import { sameRank, type Vault } from "./vault.js";
 
 /** Lint the vault: broken links, duplicate names, stale projects, overdue tasks, hygiene. */
 export function runDoctor(vault: Vault): DoctorFinding[] {
@@ -13,11 +14,33 @@ export function runDoctor(vault: Vault): DoctorFinding[] {
   // Resolve links once and build inbound edges in one pass. Backlinks-per-note
   // repeatedly scans the vault and becomes cubic when name resolution is linear.
   const incoming = new Set<string>();
+  const ambiguous = new Set<string>();
   for (const note of notes) {
     for (const link of note.links) {
       const target = vault.resolveLink(link);
       if (target) {
         if (target.path !== note.path) incoming.add(target.path);
+        // Title and alias ties are reported once below as duplicate-name; a
+        // tie between bare filename stems (two `fleet.md` in different
+        // folders) is only visible from the link that hits it.
+        const candidates = vault.nameCandidates(link.target);
+        const best = candidates[0];
+        const tied = best ? candidates.filter((c) => sameRank(c, best)) : [];
+        const key = `${note.path}\0${nameKey(link.target)}`;
+        if (
+          activePaths.has(note.path) &&
+          best?.by === "stem" &&
+          tied.length > 1 &&
+          !ambiguous.has(key)
+        ) {
+          ambiguous.add(key);
+          findings.push({
+            severity: "warning",
+            rule: "ambiguous-link",
+            message: `[[${link.target}]] matches the filename of ${tied.length} notes (${tied.map((c) => c.note.path).join(", ")}) and resolves to ${best.note.path}; link by path or give the intended note that title or alias`,
+            path: note.path,
+          });
+        }
       } else if (activePaths.has(note.path) && !isAttachmentTarget(link.target)) {
         findings.push({
           severity: "warning",
@@ -58,6 +81,47 @@ export function runDoctor(vault: Vault): DoctorFinding[] {
         severity: "warning",
         rule: "duplicate-name",
         message: `"${name}" is the title/alias of ${unique.length} notes: ${unique.join(", ")}`,
+      });
+    }
+  }
+
+  // Repeated sibling headings (two "## Log" sections): append_note targets the
+  // first, so the second never receives entries. Repeats under different
+  // parents, such as the same sub-headings in every dated entry, are a normal
+  // structure and are not flagged.
+  for (const note of active) {
+    const counts = new Map<string, { text: string; count: number }>();
+    // Parents are identified by line, not text: two "## Log" sections are
+    // different parents even though they share a name.
+    const parents: Array<{ depth: number; line: number }> = [];
+    for (const h of note.headings) {
+      while (parents.length > 0 && parents[parents.length - 1]!.depth >= h.depth) parents.pop();
+      const key = `${parents[parents.length - 1]?.line ?? -1}\0${nameKey(h.text)}`;
+      const entry = counts.get(key) ?? { text: h.text, count: 0 };
+      entry.count++;
+      counts.set(key, entry);
+      parents.push({ depth: h.depth, line: h.line });
+    }
+    for (const { text: h, count } of counts.values()) {
+      if (count < 2) continue;
+      findings.push({
+        severity: "warning",
+        rule: "duplicate-heading",
+        message: `Heading "${h}" appears ${count} times in the same section; appends under it go to the first one, so merge or rename the others`,
+        path: note.path,
+      });
+    }
+  }
+
+  // Uncommitted notes in an auto-commit vault: a commit that failed (e.g. a
+  // held index.lock) or an edit made outside big-brain.
+  if (vault.config.git.autoCommit) {
+    const dirty = uncommittedFiles(vault.dir);
+    if (dirty.length > 0) {
+      findings.push({
+        severity: "warning",
+        rule: "uncommitted-changes",
+        message: `${dirty.length} file${dirty.length === 1 ? " has" : "s have"} uncommitted changes (${dirty.slice(0, 5).join(", ")}${dirty.length > 5 ? ", …" : ""}); commit them, or check why an auto-commit failed`,
       });
     }
   }

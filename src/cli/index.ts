@@ -227,26 +227,37 @@ program
 program
   .command("new <title...>")
   .description("create a note")
-  .option("-t, --type <type>", "note|project|person|reference|area", "note")
+  .option(
+    "-t, --type <type>",
+    "note type; note|project|person|reference|area pick the folder, others default to notes/",
+    "note",
+  )
+  .option("-f, --folder <folder>", "vault-relative folder (overrides the type's folder)")
   .option("--tags <tags>", "comma-separated tags")
   .option("-b, --body <body>", "initial markdown body")
-  .action((titleWords: string[], opts: { type: string; tags?: string; body?: string }) => {
-    try {
-      const vault = openVault();
-      const note = vault.createNote({
-        title: titleWords.join(" "),
-        type: opts.type,
-        tags: opts.tags
-          ?.split(",")
-          .map((t) => t.trim())
-          .filter(Boolean),
-        body: opts.body,
-      });
-      console.log(pc.green(`Created ${note.path}`));
-    } catch (err) {
-      fail(err);
-    }
-  });
+  .action(
+    (
+      titleWords: string[],
+      opts: { type: string; folder?: string; tags?: string; body?: string },
+    ) => {
+      try {
+        const vault = openVault();
+        const note = vault.createNote({
+          title: titleWords.join(" "),
+          type: opts.type,
+          folder: opts.folder,
+          tags: opts.tags
+            ?.split(",")
+            .map((t) => t.trim())
+            .filter(Boolean),
+          body: opts.body,
+        });
+        console.log(pc.green(`Created ${note.path}`));
+      } catch (err) {
+        fail(err);
+      }
+    },
+  );
 
 program
   .command("capture <text...>")
