@@ -161,6 +161,15 @@ describe("possible duplicates", () => {
     );
   });
 
+  it("ignores a footer shared by many notes", () => {
+    const footer = "Maintained by the platform team; ask in the shared channel before editing.";
+    for (let i = 0; i < 60; i++) {
+      vault.createNote({ title: `Note ${i}`, body: `${sentences(`topic${i}`, 3)}\n\n${footer}` });
+    }
+
+    expect(runDoctor(vault).filter((f) => f.rule === "possible-duplicate")).toEqual([]);
+  });
+
   it("still checks vaults with more than 200 notes", () => {
     for (let i = 0; i < 205; i++) {
       vault.createNote({ title: `Filler ${i}`, body: sentences(`filler${i}`, 3) });
@@ -247,6 +256,22 @@ describe("stale-summary", () => {
     vault.refresh();
 
     expect(stale().map((f) => f.message.slice(0, 31))).toEqual(["Goal last changed 2026-01-05, a"]);
+  });
+
+  it("leaves fenced examples out and reads numbered or spaced items", () => {
+    vault.appendToNote("Proj", "```\n- example entry\n```", "Log");
+    commit("2026-01-06T12:00:00");
+    vault.refresh();
+    expect(stale()).toEqual([]);
+
+    vault.appendToNote("Proj", "1.  numbered entry", "Log");
+    commit("2026-01-08T12:00:00");
+    vault.appendToNote("Proj", "-   spaced entry", "Log");
+    commit("2026-01-07T12:00:00");
+    vault.refresh();
+    expect(stale()[0]?.message).toContain(
+      '2 Log entries were added after it (latest: "numbered entry")',
+    );
   });
 
   it("skips untracked notes and vaults outside git", () => {

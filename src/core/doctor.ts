@@ -2,7 +2,7 @@ import { noteRepos, sameRepo, summaryHeading } from "./context.js";
 import { isGitRepo, lineChangeTimes, uncommittedFiles } from "./git.js";
 import { projectStatus } from "./projects.js";
 import type { DoctorFinding, Heading, Note } from "./types.js";
-import { nameKey, todayISO } from "./util.js";
+import { fencedLines, nameKey, todayISO } from "./util.js";
 import { sameRank, type Vault } from "./vault.js";
 
 /** Lint the vault: broken links, duplicate names, stale projects, overdue tasks, hygiene. */
@@ -257,13 +257,18 @@ function isAttachmentTarget(target: string): boolean {
 /** Words per shingle: long enough that notes sharing a template or a topic's vocabulary don't match. */
 const SHINGLE_WORDS = 5;
 const DUPLICATE_SIMILARITY = 0.5;
+/** A shingle in more notes than this is boilerplate (a shared footer), not evidence of a copy. */
+const COMMON_SHINGLE_NOTES = 50;
 
 /**
  * Pairs of notes whose runs of consecutive words mostly coincide (Jaccard
  * similarity of their word shingles). Comparing word runs instead of word sets
  * keeps notes built from one template, or about one topic, apart while copied
  * passages still match. Pairs are found through an inverted index, so only
- * notes sharing at least one shingle are compared.
+ * notes sharing at least one shingle are compared. Shingles in more than
+ * COMMON_SHINGLE_NOTES notes are left out of the shared counts: they would
+ * pair every note with every other at quadratic cost, and only lower a
+ * pair's similarity by leaving them out.
  */
 function possibleDuplicates(active: Note[]): DoctorFinding[] {
   const docs = active
@@ -280,6 +285,7 @@ function possibleDuplicates(active: Note[]): DoctorFinding[] {
   });
   const shared = new Map<number, number>();
   for (const list of postings.values()) {
+    if (list.length > COMMON_SHINGLE_NOTES) continue;
     for (let a = 0; a < list.length; a++) {
       for (let b = a + 1; b < list.length; b++) {
         const key = list[a]! * docs.length + list[b]!;
@@ -315,6 +321,10 @@ function bodyShingles(body: string): Set<string> {
   return shingles;
 }
 
+/** A list item: a bullet or a numbered item, indented at most three spaces. */
+const LIST_ITEM_MARKER = /^ {0,3}(?:[-*+]|\d{1,9}[.)])\s+/;
+const LIST_ITEM = new RegExp(`${LIST_ITEM_MARKER.source}\\S`);
+
 /**
  * A finding when Log entries were added on a later day than the note's Summary
  * (or Overview, or Goal) last changed, dated line by line with `git blame`.
@@ -327,8 +337,14 @@ function staleSummary(vaultDir: string, note: Note): DoctorFinding | undefined {
   const log = note.headings.find((h) => h.text.trim().toLowerCase() === "log");
   if (!summary || !log) return undefined;
   const lines = note.body.split("\n");
-  const summaryLines = sectionRange(note, summary, lines.length).filter((i) => lines[i]!.trim());
-  const entries = sectionRange(note, log, lines.length).filter((i) => /^[-*+] \S/.test(lines[i]!));
+  const fenced = fencedLines(lines);
+  const prose = (i: number) => !fenced[i];
+  const summaryLines = sectionRange(note, summary, lines.length).filter(
+    (i) => prose(i) && lines[i]!.trim(),
+  );
+  const entries = sectionRange(note, log, lines.length).filter(
+    (i) => prose(i) && LIST_ITEM.test(lines[i]!),
+  );
   if (summaryLines.length === 0 || entries.length === 0) return undefined;
   const times = lineChangeTimes(vaultDir, note.path);
   if (!times) return undefined;
@@ -341,7 +357,9 @@ function staleSummary(vaultDir: string, note: Note): DoctorFinding | undefined {
     return t !== undefined && todayISO(new Date(t)) > changed;
   });
   if (newer.length === 0) return undefined;
-  const latest = lines[newer[newer.length - 1]!]!.replace(/^[-*+] /, "").trim();
+  // The most recently added entry; among entries added together, the last in the note.
+  const latestLine = newer.reduce((a, b) => ((at(b) ?? 0) >= (at(a) ?? 0) ? b : a));
+  const latest = lines[latestLine]!.replace(LIST_ITEM_MARKER, "").trim();
   const quoted = latest.length > 100 ? `${latest.slice(0, 99)}…` : latest;
   const count = newer.length === 1 ? "1 Log entry was" : `${newer.length} Log entries were`;
   return {
