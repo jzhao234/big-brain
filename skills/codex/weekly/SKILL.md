@@ -1,43 +1,28 @@
 ---
 name: weekly
 description: >
-  Run a guided weekly review of the user's Big Brain: inbox triage,
-  active-project review, task hygiene, vault health, and consolidation. Use for
-  weekly reviews, brain cleanup, inbox triage, or explicit $weekly invocation.
+  Run the weekly review of the big-brain second brain: triage the inbox, walk
+  active projects, reschedule or drop overdue tasks, check vault health, and
+  write a review summary. Use when the user types $weekly, or asks for a "weekly
+  review", "review my projects", "clean up my brain", "triage my inbox".
 ---
 
-# Big Brain weekly review
+# weekly
 
-Resolve the vault through `big-brain`; do not hardcode its path. This is a
-working meeting with the user. Gather and propose first, then apply the approved
-batch. Aim for about ten minutes.
+A guided review of the big-brain vault (whichever `big-brain` resolves via `BIG_BRAIN_VAULT`, `--vault`, or the nearest `brain.config.json`). Work through it *with* the user: propose, confirm, act. The outcome: an empty inbox, honest project statuses, a task list that reflects reality, and a written record.
 
-1. **Snapshot.** Run `big-brain status` and `big-brain doctor`. Lead with the
-   two or three items needing attention: overdue tasks, stale projects, inbox
-   pileup, or broken links.
-2. **Inbox triage.** For each inbox item, propose one destination: merge into an
-   existing note/project, create a linked note, create tasks, or archive. Batch
-   the proposals and obtain confirmation before moving/archiving.
-3. **Project walk.** For each active project, show latest log entries, open
-   tasks, and blockers. Ask whether it remains active. For projects untouched
-   for 2+ weeks, propose a concrete next task or status change.
-4. **Task hygiene.** Resolve every overdue task as do-this-week with a real new
-   date, someday with no date, or dead. Never roll a due date forward silently
-   twice; flag that as a scoping/priority signal.
-5. **Doctor fixes.** Fix obvious broken wikilinks/duplicate names only after the
-   batch is confirmed. List ambiguous findings.
-6. **Consolidate.** Use doctor findings and `big-brain related <note>` to propose
-   Summary refreshes for `stale-summary` (from the Log entries added after it,
-   or a refreshed as-of date if it still holds), moving old Log entries of
-   bloated notes verbatim to an archive note (split out a section only when it
-   covers a separate topic), merges for near-duplicates, and fixes for stale
-   facts. Change existing text with `big-brain edit` (`edit_note`), one exact
-   passage at a time, never by retyping the note. Never merge, archive, or
-   rewrite notes without confirmation.
-7. **Record.** Log projects reviewed, status/task changes, inbox work,
-   consolidations, and the user's stated focus for next week in today's daily
-   note.
+## Order of operations
 
-Prefer Big Brain tools/CLI for mutations. Preserve `area`, tags, frontmatter,
-tasks, and wikilinks. Never store secrets. Writes may auto-commit/push; avoid
-duplicate manual commits. Keep each exchange short and concrete.
+1. **Snapshot.** `big-brain status` + `big-brain doctor`. Lead with the two or three things that most need attention (overdue tasks, stale projects, inbox pileup, broken links).
+2. **Inbox triage.** For each note in the inbox, propose exactly one destination: merge into an existing note/project, become a new linked note, become tasks, or archive. Batch the proposals, get one confirmation, execute, archive the processed captures.
+3. **Project walk.** For each `active` project: last Log entries, open tasks, blockers. Ask the one question that matters: *is this still active?* Update statuses (`big-brain project status <ref> paused|done|dropped`): a shorter honest list beats an impressive stale one. For projects untouched for 2+ weeks, suggest a concrete next task or a status change.
+4. **Task hygiene.** Overdue tasks get one of: do-this-week (new due date), someday (drop the date), or dead (remove). Never let a due date silently roll forward twice: that's a signal the task is mis-scoped or unwanted; say so.
+5. **Doctor fixes.** Fix broken wikilinks and duplicate names found in step 1 where the fix is obvious; list the rest.
+6. **Consolidate.** The doctor's `stale-summary`, `bloated-note` and `possible-duplicate` findings are the queue; `big-brain related <note>` shows what a note overlaps with. Propose (never apply unconfirmed): **refresh a stale Summary** from the Log entries added after it (session context shows the Summary, not the Log), or refresh its as-of date if it still holds; **trim a bloated note** by moving old Log entries verbatim to an archive note, splitting out a section only when it covers a separate topic; **merge** near-duplicates into one canonical note (archive the loser, keep its title as an alias); **prune stale facts**: while reading project notes in step 3, flag statements that no longer hold (old statuses, superseded decisions, dead links to reality) and fix them. Change existing text with `big-brain edit` (`edit_note`), one exact passage at a time, never by retyping the note. One batch of proposals, user confirms, execute. Memory that never gets consolidated rots; this step is why the vault stays trustworthy.
+7. **Write the record.** Append a short summary to today's daily note Log: projects reviewed, status changes, inbox items processed, consolidations made, what the user said matters next week. If the vault has git auto-commit enabled, the review's edits commit and push on their own; otherwise commit at the end (`git -C <vault> add -A && git -C <vault> commit -m "weekly review <date>" && git -C <vault> push`).
+
+## Tone
+
+This is a working meeting, not a report. Short exchanges, concrete proposals, sensible defaults ("I'd archive these three. Any objections?"). The user's time budget is ~10 minutes; don't stretch it.
+
+Keep each note's frontmatter, `area`, tags, tasks, and wikilinks intact, and never store secrets in the vault.

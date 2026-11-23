@@ -1,6 +1,6 @@
 {
   "name": "@jzhao234/big-brain",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "A plain-markdown second brain for you and your AI assistants: an Obsidian-compatible vault, MCP server, and CLI for notes, projects, and tasks.",
   "keywords": [
     "second-brain",
@@ -49,6 +49,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "skills": "npm run build && node scripts/render-skills.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

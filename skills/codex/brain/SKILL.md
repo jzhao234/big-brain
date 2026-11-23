@@ -1,55 +1,35 @@
 ---
 name: brain
-description: Orient from the user's Big Brain vault and stay brain-aware during ongoing work. Use when the user asks what they are working on, what is overdue, to catch them up, to zoom into a project, or explicitly invokes $brain.
+description: >
+  Orient in the user's big-brain second brain and work brain-aware for the rest
+  of the session. Use when the user types $brain, or asks "what am I working
+  on", "what's on my plate", "catch me up", "what's overdue", or at the start of
+  a session about ongoing work. Loads the vault overview, reports it in one
+  screen, and keeps the vault updated as work happens.
 ---
 
-# Brain-aware work
+# brain
 
-Big Brain is the user's shared external memory. Resolve the vault through the
-`big-brain` CLI (`BIG_BRAIN_VAULT`, an explicit `--vault`, or the nearest
-`brain.config.json`); do not hardcode a path. Use Big Brain MCP tools when they
-are actually available, otherwise use the CLI and ordinary filesystem reads.
+The big-brain vault is the user's external memory, shared by all their AI tools. This skill loads it and switches you into brain-aware mode. The vault is whichever one `big-brain` resolves using the `BIG_BRAIN_VAULT` env var, a `--vault` path, or the nearest `brain.config.json`. Use the `big-brain` CLI, or the big-brain MCP tools when this session has them; don't hardcode a vault path.
 
-## Orient
+## With no argument
 
-With no named topic:
+1. Run `big-brain status` (or call the `brain_overview` MCP tool).
+2. Report in one screen, BLUF: active projects with their next task, anything overdue or due this week, inbox count if it's piling up. No filler; skip empty sections.
+3. If the vault hasn't been linted recently, run `big-brain doctor` and surface only warnings.
 
-1. Run `big-brain status`.
-2. Report one-screen BLUF: active projects and next tasks, overdue/due-soon
-   work, and inbox count when nonzero. Skip empty sections.
-3. Run `big-brain doctor` only when health has not been checked recently or the
-   user asks; surface warnings, not routine clean output.
+## With an argument
 
-With a named project/topic, run `big-brain show <topic>`, falling back to
-`big-brain search <topic>`. Summarize the goal, status, open tasks, blockers,
-and latest log entries, then continue with the user's requested work.
+Treat it as a project or topic: `big-brain show <arg>` (falling back to `big-brain search <arg>`), then summarize where it stands (goal, status, open tasks, last Log entries) and ask what to work on.
 
-## Stay brain-aware
+## Brain-aware mode (rest of the session)
 
-For the rest of the session, keep durable state current as work produces it:
+From here on, keep the vault current as a side effect of the work:
 
-- decisions, progress, or failures → daily log and the relevant project log;
-  when the log line changes what the project's Summary (or Goal) says (state,
-  version, what is open or done), update the Summary too, since the next
-  session sees the Summary, not the log;
-- fixing existing text → `big-brain edit <note> --old "<exact passage>" --new
-  "<replacement>"` (`edit_note`), never retyping the whole note;
-- new multi-step commitment → project;
-- new action → task on the matching project;
-- completed action → mark its existing task done;
-- durable fact with no obvious home → capture or linked reference/note.
+- Decisions, progress, and problems → `big-brain daily --log "..."` and a Log line on the affected project. When that line changes what the project's Summary (or Goal) says, such as its state, version, or what's open or done, update the Summary too: the next session sees the Summary, not the Log.
+- Fixing existing text → `big-brain edit <note> --old "<exact passage>" --new "<replacement>"` (`edit_note`), never retyping the whole note.
+- New commitments → project notes; new action items → `big-brain task add`.
+- Completed work → `big-brain task done <id>`.
+- Facts worth keeping with no obvious home → `big-brain capture "..."`.
 
-Routine append-only logs and captures are authorized when the user invoked this
-skill. Ask before rewriting, consolidating, archiving, or changing project
-status unless the user already requested that operation. Preserve vault
-frontmatter, `area`, work tags, tasks, and wikilinks. Never store credentials,
-tokens, private keys, or unredacted sensitive datasets.
-
-Big Brain may auto-commit and auto-push writes. Treat a CLI write as an external
-mutation: describe it briefly in commentary and do not issue duplicate git
-commits afterward. If editing files directly because the CLI lacks the needed
-operation, inspect the vault's git config and leave a clean, synced repository
-only when the user authorized saving/syncing.
-
-Before ending, verify that meaningful work from the session is reflected in the
-vault. Tell the user in one line what was recorded.
+Do routine captures/logs without asking (mention them in one line); ask before rewriting or archiving existing notes, or changing a project's status, unless the user already asked for it. Keep each note's frontmatter, `area`, tags, tasks, and wikilinks intact, and never store credentials, tokens, private keys, or raw sensitive data. If the vault has git auto-commit enabled, these saves also commit and push on their own, so don't commit them again yourself. At the end of a work session, make sure what happened is reflected in the vault and say in one line what you recorded. The next session (or another LLM) starts from there.

@@ -196,7 +196,7 @@ Three skills wrap the tools into commands, for Claude Code and Antigravity (`/br
 - **`capture`:** zero-friction capture to the inbox
 - **`weekly`:** a guided weekly review
 
-`big-brain agents install claude codex agy` installs them for each agent (see below). They are copied, not linked, since the package path changes between versions, and kept current: a copy you haven't edited is updated when big-brain ships a newer one, and an edited copy is kept and reported (`--replace` backs it up and copies big-brain's). A skill of the same name in `agents/<agent>/skills/` replaces the bundled one, and then follows the vault instead of big-brain. `big-brain install-skills` still copies the Claude versions into `~/.claude/skills` (`--force` overwrites). They're path-agnostic: they call the `big-brain` CLI / MCP tools and resolve the vault from `BIG_BRAIN_VAULT` (or `--vault`), so the same skill works on every machine.
+`big-brain agents install claude codex agy` installs them for each agent (see below). They are copied, not linked, since the package path changes between versions, and kept current: a copy you haven't edited is updated when big-brain ships a newer one, and an edited copy is kept and reported (`--replace` backs it up and copies big-brain's). A skill of the same name in `agents/<agent>/skills/` replaces the bundled one, and then follows the vault instead of big-brain. `big-brain install-skills` still copies the Claude versions into `~/.claude/skills` (`--force` overwrites). Each is written once in `skills/source/` and rendered for each agent the same way as your own skills (below). They're path-agnostic: they call the `big-brain` CLI / MCP tools and resolve the vault from `BIG_BRAIN_VAULT` (or `--vault`), so the same skill works on every machine.
 
 ## Agent profiles: your agent setup in the vault
 
@@ -222,6 +222,7 @@ big-brain agents install --dry-run         # show the plan
 big-brain agents install                   # link everything (agents with a profile; or name them)
 big-brain agents save claude statusline.sh --setting statusLine    # capture a local change
 big-brain agents save codex skills/my-skill --setting tui.status_line
+big-brain agents render                    # write each agent's copy of agents/skills/<name> (below)
 ```
 
 How it stays safe:
@@ -233,6 +234,43 @@ How it stays safe:
 - **`save` refuses known secret and state files.** Whole settings files, `.credentials.json`, `auth.json`, `.env` files, history, sessions, caches and databases are refused; save individual settings with `--setting`. It doesn't inspect contents, so review the files and `--setting` values you save (an `env.API_KEY` setting would be copied as is).
 - **Codex hooks stay local.** Codex asks you to trust each hook on each machine, so hook registrations are not managed for Codex. Claude Code users: review new hooks with `/hooks`. Status warns when Codex's `AGENTS.override.md` overrides `AGENTS.md`.
 - **Antigravity split layout.** agy keeps its customizations in `~/.gemini/config/` and its CLI settings next door in `~/.gemini/antigravity-cli/settings.json`, so big-brain links agy's instructions, skills, and files into `~/.gemini/config/` and merges `agents/agy/settings.json` into `~/.gemini/antigravity-cli/settings.json`; `mcp_config.json` and `config.json` are agy's own and never linked. Its `AGENTS.md` lives under `~/.gemini/config/` rather than `~/.gemini/GEMINI.md`, which the Gemini CLI also reads.
+
+### One skill for every agent
+
+Claude Code, Codex and Antigravity read the same kind of `SKILL.md`, but each wants something slightly different: Codex runs a skill as `$name` and reads its picker metadata from `agents/openai.yaml`, Claude Code has its own frontmatter keys (`argument-hint`, `disable-model-invocation`), and Antigravity accepts only `name` and `description`. Instead of keeping three copies that drift apart, write the skill once in `agents/skills/<name>/` and let `big-brain agents render` write each agent's copy into `agents/<agent>/skills/<name>/`, where `install` links it as usual.
+
+```markdown
+---
+name: test
+description: >
+  Add or improve tests. Use when the user types {{/test}} or asks for tests.
+agents: [claude, codex, agy]        # optional; default: every agent with a profile
+invocation: explicit                # optional: only when the user asks by name
+claude:
+  argument-hint: "[file or module]"
+codex:
+  openai:                           # becomes agents/openai.yaml
+    interface:
+      display_name: "Test"
+      short_description: "Write behavior-focused tests for a change"
+      default_prompt: "Use {{/test}} to cover this change."
+---
+
+# test
+
+...instructions, written once...
+
+<!-- only: codex -->
+A line only Codex needs.
+<!-- /only -->
+```
+
+- `{{/name}}` becomes `/name`, or `$name` for Codex; `{{agent}}` is the agent's name (Claude, Codex, agy) and `{{agent.name}}` its id. Other `{{...}}` text is left alone.
+- `invocation: explicit` sets `disable-model-invocation` for Claude Code and `policy.allow_implicit_invocation: false` for Codex. Antigravity has no such setting, so its description gets a sentence saying to run the skill only when the user asks for it by name.
+- A map named after an agent holds frontmatter for that agent only, over the shared keys (a different `description` too). Every Markdown file in the folder is a template; scripts and other files are copied byte for byte.
+- Rendering is deterministic, so a copy can be checked against its source. Each generated `SKILL.md` starts with a comment naming its source and a hash of what render wrote. A copy edited by hand (through the link in `~/.claude/skills`, say) is reported and never overwritten unless `--replace`, which backs it up first; a hand-written folder in the way is treated the same. `--prune` removes copies whose source is gone (an edited one only with `--replace` too).
+- `big-brain agents render --check` writes nothing and exits 1 when any copy differs from its source, for CI. `agents status` and `install` list the same problems; `install` never renders, and render never commits, so commit the source and its copies together.
+- Skills with no source in `agents/skills/` stay hand-written per agent, for a skill that really has to work differently in each one.
 
 `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are honored. The folder name is `folders.agents` in `brain.config.json` (default `agents`), and it is never indexed as notes.
 
@@ -321,7 +359,7 @@ big-brain daily [--log "..."]   daily note / journal    big-brain index [--statu
 big-brain append <note> <text>  append [--heading H]    big-brain frontmatter <note> k=v ...
 big-brain archive <note>        archive (non-destructive delete)
 big-brain edit <note> --old T --new T   replace one exact passage (--all for every match)
-big-brain agents status|install|save   agent setup from the vault (see Agent profiles)
+big-brain agents status|install|save|render   agent setup from the vault (see Agent profiles)
 big-brain install-skills        add Claude Code skills  big-brain mcp   run the MCP server
 ```
 

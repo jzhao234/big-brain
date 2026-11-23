@@ -20,6 +20,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
+import { isGeneratedSkill } from "./skill-marker.js";
 import { bundledSkillsDir } from "./skills.js";
 
 // ---------------------------------------------------------------------------
@@ -54,6 +55,23 @@ export interface AgentDef {
   managesHooks: boolean;
   /** Files in the home that are never linked or saved as plain files. */
   reserved: string[];
+  /** How this agent's skills are written; `agents render` follows it. */
+  skill: SkillFormat;
+}
+
+export interface SkillFormat {
+  /** What the user types before a skill's name to run it. */
+  prefix: "/" | "$";
+  /** The agent's name in skill prose (`{{agent}}`). */
+  shortLabel: string;
+  /** The only frontmatter keys the agent accepts, when it accepts only some. */
+  frontmatter?: readonly string[];
+  /**
+   * How a skill is limited to explicit use (`invocation: explicit`): a
+   * frontmatter flag, Codex's `policy` in agents/openai.yaml, or, for an agent
+   * with neither, a sentence in the description.
+   */
+  explicitOnly: "frontmatter" | "openai-policy" | "description";
 }
 
 export const AGENTS: readonly AgentDef[] = [
@@ -68,6 +86,7 @@ export const AGENTS: readonly AgentDef[] = [
     format: "json",
     managesHooks: true,
     reserved: ["settings.json", "settings.local.json", ".credentials.json"],
+    skill: { prefix: "/", shortLabel: "Claude", explicitOnly: "frontmatter" },
   },
   {
     name: "codex",
@@ -82,6 +101,7 @@ export const AGENTS: readonly AgentDef[] = [
     // Codex hooks need a per-machine trust review; registrations stay local.
     managesHooks: false,
     reserved: ["config.toml", "auth.json", "hooks.json"],
+    skill: { prefix: "$", shortLabel: "Codex", explicitOnly: "openai-policy" },
   },
   {
     name: "agy",
@@ -96,6 +116,12 @@ export const AGENTS: readonly AgentDef[] = [
     format: "json",
     managesHooks: false,
     reserved: ["mcp_config.json", "config.json", "settings.json"],
+    skill: {
+      prefix: "/",
+      shortLabel: "agy",
+      frontmatter: ["name", "description"],
+      explicitOnly: "description",
+    },
   },
 ];
 
@@ -153,6 +179,14 @@ export function canonicalPath(p: string): string {
   return path.join(fs.realpathSync(cur), ...rest);
 }
 
+/** big-brain's state folder on this machine (records and backups). */
+export function stateDir(sys: SystemEnv = defaultSystem()): string {
+  return path.join(
+    sys.env.XDG_STATE_HOME || path.join(sys.userHome, ".local", "state"),
+    "big-brain",
+  );
+}
+
 export function agentPaths(
   vaultDir: string,
   agentsFolder: string,
@@ -166,10 +200,7 @@ export function agentPaths(
     : home;
   const settingsFile = agent.settingsFile ? path.join(settingsDir, agent.settingsFile) : null;
   const vault = canonicalPath(vaultDir);
-  const stateRoot = path.join(
-    sys.env.XDG_STATE_HOME || path.join(sys.userHome, ".local", "state"),
-    "big-brain",
-  );
+  const stateRoot = stateDir(sys);
   const homeKey = crypto.createHash("sha256").update(home).digest("hex").slice(0, 12);
   return {
     agent,
@@ -303,6 +334,8 @@ export function collectEntries(p: AgentPaths): Entry[] {
     for (const entry of fs
       .readdirSync(skillsRoot, { withFileTypes: true })
       .sort((a, b) => a.name.localeCompare(b.name))) {
+      // Hidden folders are not skills (agents render stages copies in them).
+      if (entry.name.startsWith(".")) continue;
       const abs = path.join(skillsRoot, entry.name);
       if (entry.isSymbolicLink()) {
         throw new Error(`Symlinks are not allowed in an agent profile: skills/${entry.name}`);
@@ -1080,7 +1113,7 @@ class Backup {
  * Rename, or copy then delete when the two paths are on different filesystems
  * (an agent home on another mount than the backups under XDG_STATE_HOME).
  */
-function moveAcross(from: string, to: string): void {
+export function moveAcross(from: string, to: string): void {
   try {
     fs.renameSync(from, to);
   } catch (err) {
@@ -1462,6 +1495,14 @@ export function saveToProfile(
     }
     const target = vaultTarget(p, rel, st.isDirectory());
     checkVaultParents(p.vault, target);
+    if (st.isDirectory()) {
+      const source = path.join(path.dirname(p.profile), SKILLS, path.basename(target));
+      if (isGeneratedSkill(target) || fs.existsSync(source)) {
+        throw new Error(
+          `${rel}: the vault renders this skill from ${toRel(path.relative(p.vault, source))}; put the change there and run big-brain agents render`,
+        );
+      }
+    }
     if (fs.existsSync(target) && !opts.force) {
       throw new Error(
         `${toRel(path.relative(p.vault, target))} already exists in the vault (use --force to overwrite)`,
