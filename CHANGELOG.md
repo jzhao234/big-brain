@@ -2,11 +2,17 @@
 
 All notable changes to big-brain. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/) (below 1.0, a minor version may change behavior).
 
-## 0.4.1 (2026-11-20)
+## 0.4.1 (2026-11-23)
 
 ### Added
 
 - `edit_note` (MCP) and `big-brain edit <note> --old … --new …` replace one exact passage of a note's body and leave the rest of the note as it was. The passage must match exactly once, overlapping matches included (`replace_all` / `--all` replaces every match), so a stale or ambiguous edit fails instead of landing in the wrong place. It never touches the frontmatter (use `update_frontmatter`) and works on a note whose YAML doesn't parse. Before, changing existing text meant `replace_note_body`, which has the agent retype the whole note, a risk of silently dropping facts in a long note.
+- `doctor` reports `stale-summary` (info) when Log entries were added on a later day than the note's Summary (or Overview, or Goal) last changed, the section session context shows. It dates lines with `git blame`, so it runs only in a git vault and skips untracked notes.
+
+### Changed
+
+- `doctor`'s `possible-duplicate` compares runs of five consecutive words instead of the sets of words two notes use, so notes built from one template or about one topic are no longer reported, while copied passages still are. It also runs on vaults of any size: before, it silently skipped vaults with more than 200 notes.
+- The bundled `/brain` and `/weekly` skills (Claude Code, Codex and agy) fix existing text with `edit_note` and keep the Summary current when a Log line changes what it says. `/weekly` refreshes stale Summaries, and for a bloated note it proposes moving old Log entries to an archive note, splitting out only a section that covers a separate topic; the `bloated-note` message says the same.
 
 ## 0.4.0 (2026-11-20)
 

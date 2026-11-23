@@ -27,8 +27,13 @@ batch. Aim for about ten minutes.
 5. **Doctor fixes.** Fix obvious broken wikilinks/duplicate names only after the
    batch is confirmed. List ambiguous findings.
 6. **Consolidate.** Use doctor findings and `big-brain related <note>` to propose
-   splits for bloated notes, merges for near-duplicates, and removal/striking of
-   stale facts. Never merge, archive, or rewrite notes without confirmation.
+   Summary refreshes for `stale-summary` (from the Log entries added after it,
+   or a refreshed as-of date if it still holds), moving old Log entries of
+   bloated notes verbatim to an archive note (split out a section only when it
+   covers a separate topic), merges for near-duplicates, and fixes for stale
+   facts. Change existing text with `big-brain edit` (`edit_note`), one exact
+   passage at a time, never by retyping the note. Never merge, archive, or
+   rewrite notes without confirmation.
 7. **Record.** Log projects reviewed, status/task changes, inbox work,
    consolidations, and the user's stated focus for next week in today's daily
    note.

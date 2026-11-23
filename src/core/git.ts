@@ -14,7 +14,7 @@ function git(vaultDir: string, args: string[], timeout = LOCAL_GIT_TIMEOUT_MS): 
   });
 }
 
-function isGitRepo(vaultDir: string): boolean {
+export function isGitRepo(vaultDir: string): boolean {
   try {
     return git(vaultDir, ["rev-parse", "--is-inside-work-tree"]).trim() === "true";
   } catch {
@@ -128,6 +128,44 @@ export function uncommittedFiles(vaultDir: string): string[] {
     if (/^[RC]|^.[RC]/.test(entry)) i++;
   }
   return paths;
+}
+
+/**
+ * When each line of a vault file last changed, by 0-based file line, from
+ * `git blame` (committer time in ms; lines not committed yet read as now).
+ * Undefined when the vault isn't a git repo, the file isn't tracked, or git
+ * fails.
+ */
+export function lineChangeTimes(vaultDir: string, relPath: string): number[] | undefined {
+  let out: string;
+  try {
+    out = git(vaultDir, ["blame", "--porcelain", "--", relPath]);
+  } catch {
+    return undefined;
+  }
+  // Porcelain output: a `<sha> <orig-line> <final-line>` header per line, the
+  // commit's details (including committer-time) the first time each sha
+  // appears, then the line's content prefixed with a tab.
+  // Uncommitted lines carry the all-zero sha.
+  const now = Date.now();
+  const commitTimes = new Map<string, number>();
+  const times: number[] = [];
+  let sha = "";
+  let line = -1;
+  for (const row of out.split("\n")) {
+    if (row.startsWith("\t")) {
+      times[line] = /^0+$/.test(sha) ? now : (commitTimes.get(sha) ?? now);
+      continue;
+    }
+    const header = /^([0-9a-f]{40}) \d+ (\d+)/.exec(row);
+    if (header) {
+      sha = header[1]!;
+      line = Number(header[2]) - 1;
+    } else if (row.startsWith("committer-time ")) {
+      commitTimes.set(sha, Number(row.slice("committer-time ".length)) * 1000);
+    }
+  }
+  return times;
 }
 
 /** Per vault: the push in flight, and whether another commit landed meanwhile. */

@@ -149,7 +149,7 @@ The whole point is that you never re-feed context. The assistant **loads** a sma
 | Change metadata | *"set Auth's due date to …"* | `big-brain frontmatter "Auth" due=2026-11-01` |
 | Retire a note | *"archive that note"* | `big-brain archive "Auth"` |
 
-**Review:** `/weekly` runs a guided pass: triage the inbox, prune projects, reschedule overdue tasks, fix broken links, and **consolidate**: `big-brain doctor` flags bloated notes and near-duplicates, and the review proposes splits/merges/stale-fact pruning for your approval. Capture and search keep a brain useful; consolidation keeps it trustworthy.
+**Review:** `/weekly` runs a guided pass: triage the inbox, prune projects, reschedule overdue tasks, fix broken links, and **consolidate**: `big-brain doctor` flags Summaries that fell behind their Log, bloated notes and near-duplicates, and the review proposes Summary refreshes, Log trims, merges and stale-fact fixes for your approval. Capture and search keep a brain useful; consolidation keeps it trustworthy.
 
 ## Session context: the right note, before you ask
 
@@ -302,7 +302,7 @@ Notes are markdown + YAML frontmatter (`type`, `tags`, `status`, `due`…). Task
 | `list_tasks` / `add_task` / `complete_task` / `update_task` | Checkbox tasks across the vault; `update_task` reschedules, reprioritizes, rewords, reopens, or cancels one in place |
 | `note_links` | Outgoing links + backlinks for a note |
 | `related_notes` | Related notes with reasons: links, co-citations, rare shared tags, title mentions, semantic similarity |
-| `list_tags` / `vault_health` | Tag census; broken links, frontmatter that doesn't parse, stale projects, bloated/duplicate notes, overdue tasks |
+| `list_tags` / `vault_health` | Tag census; broken links, frontmatter that doesn't parse, stale projects, Summaries behind their Log, bloated/duplicate notes, overdue tasks |
 
 Plus three MCP prompts: `orient`, `weekly-review`, `process-inbox`.
 
