@@ -11,7 +11,15 @@ import {
   stateDir,
 } from "./agents.js";
 import { parseFrontmatter } from "./frontmatter.js";
-import { generatedUnedited, hashFiles, markerLine, readMarker, readTree } from "./skill-marker.js";
+import {
+  generatedUnedited,
+  hashFiles,
+  hashTree,
+  markerLine,
+  readMarker,
+  readTree,
+  type SkillFiles,
+} from "./skill-marker.js";
 
 /**
  * Skills written once and rendered for each agent.
@@ -53,7 +61,7 @@ export interface SkillSource {
   perAgent: Map<string, Record<string, unknown>>;
   /** SKILL.md body and every other file. */
   body: string;
-  files: Map<string, Buffer>;
+  files: SkillFiles;
 }
 
 function isMap(v: unknown): v is Record<string, unknown> {
@@ -84,7 +92,7 @@ export function loadSkillSource(
 
   let parsed: { data: Record<string, unknown>; content: string };
   try {
-    parsed = parseFrontmatter(raw.toString("utf8"));
+    parsed = parseFrontmatter(raw.bytes.toString("utf8"));
   } catch (err) {
     fail(dir, `frontmatter: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -187,7 +195,9 @@ function fillDeep(value: unknown, agent: AgentDef): unknown {
 
 const ONLY_OPEN_RE = /^\s*<!--\s*only:\s*(.*?)\s*-->\s*$/;
 const ONLY_CLOSE_RE = /^\s*<!--\s*\/only\s*-->\s*$/;
-const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/;
+// A fence may sit after list markers or blockquote `>`s, at any indent, so
+// code inside a list item counts as code too.
+const FENCE_RE = /^\s*(?:(?:[-*+]|\d{1,9}[.)])\s+|>\s?)*(`{3,}|~{3,})(.*)$/;
 
 /**
  * Keep the lines meant for `agent`: text inside `<!-- only: ... -->` blocks
@@ -236,13 +246,15 @@ export function selectLines(
     }
     const fenceMatch = FENCE_RE.exec(bare);
     if (fence === null && fenceMatch) {
-      fence = fenceMatch[1] as string;
+      // A backtick fence's info string can't hold a backtick (that's inline code).
+      const ticks = fenceMatch[1] as string;
+      if (!(ticks[0] === "`" && (fenceMatch[2] as string).includes("`"))) fence = ticks;
     } else if (
       fence !== null &&
       fenceMatch &&
       (fenceMatch[1] as string)[0] === fence[0] &&
       (fenceMatch[1] as string).length >= fence.length &&
-      bare.trim() === (fenceMatch[1] as string)
+      (fenceMatch[2] as string).trim() === ""
     ) {
       fence = null;
     }
@@ -385,32 +397,41 @@ export function renderSkill(
   source: SkillSource,
   agent: AgentDef,
   opts: { marker?: string; known?: readonly AgentDef[] } = {},
-): Map<string, Buffer> {
+): SkillFiles {
   const known = opts.known ?? AGENTS;
   const { frontmatter, openai } = agentMetadata(source, agent);
   const yamlText = yaml.dump(frontmatter, { lineWidth: 80, noRefs: true, quotingType: '"' });
   const body = selectLines(fill(source.body, agent), agent, known, `${source.name}/${SKILL}`);
-  const files = new Map<string, Buffer>();
-  for (const [rel, bytes] of source.files) {
+  const text = (t: string) => ({ bytes: Buffer.from(t, "utf8"), exec: false });
+  const files: SkillFiles = new Map();
+  for (const [rel, file] of source.files) {
     files.set(
       rel,
       rel.toLowerCase().endsWith(".md")
-        ? Buffer.from(
-            selectLines(fill(bytes.toString("utf8"), agent), agent, known, `${source.name}/${rel}`),
-            "utf8",
-          )
-        : bytes,
+        ? {
+            bytes: Buffer.from(
+              selectLines(
+                fill(file.bytes.toString("utf8"), agent),
+                agent,
+                known,
+                `${source.name}/${rel}`,
+              ),
+              "utf8",
+            ),
+            exec: file.exec,
+          }
+        : file,
     );
   }
   if (openai !== undefined) {
     checkOpenai(openai, source);
-    files.set(OPENAI_FILE, Buffer.from(openaiYaml(openai, source.dir), "utf8"));
+    files.set(OPENAI_FILE, text(openaiYaml(openai, source.dir)));
   }
   const head = `---\n${yamlText}---\n`;
-  files.set(SKILL, Buffer.from(head + body, "utf8"));
+  files.set(SKILL, text(head + body));
   if (opts.marker !== undefined) {
     const hash = hashFiles(files);
-    files.set(SKILL, Buffer.from(`${head}${markerLine(opts.marker, hash)}\n${body}`, "utf8"));
+    files.set(SKILL, text(`${head}${markerLine(opts.marker, hash)}\n${body}`));
   }
   return files;
 }
@@ -438,7 +459,9 @@ export interface RenderItem {
   rel: string;
   state: RenderState;
   action: RenderAction;
-  files?: Map<string, Buffer>;
+  files?: SkillFiles;
+  /** Hash of the folder as planned; apply rechecks it so an edit made since is never lost. */
+  seen?: string;
 }
 
 export interface RenderPlan {
@@ -456,13 +479,34 @@ export interface RenderOptions {
 
 const SOURCES = "skills";
 
-function sameFiles(a: Map<string, Buffer>, b: Map<string, Buffer>): boolean {
+function sameFiles(a: SkillFiles, b: SkillFiles): boolean {
   if (a.size !== b.size) return false;
-  for (const [rel, bytes] of a) {
+  for (const [rel, file] of a) {
     const other = b.get(rel);
-    if (!other?.equals(bytes)) return false;
+    if (!other || other.exec !== file.exec || !other.bytes.equals(file.bytes)) return false;
   }
   return true;
+}
+
+/**
+ * Render reads and writes only real folders inside the vault: a symlinked
+ * agents folder, profile, skills folder or source folder could point at
+ * another vault, whose copies `--prune` would then delete.
+ */
+function checkRealFolders(agentsRoot: string, agents: readonly AgentDef[]): void {
+  const parts = [
+    agentsRoot,
+    path.join(agentsRoot, SOURCES),
+    ...agents.flatMap((a) => [
+      path.join(agentsRoot, a.name),
+      path.join(agentsRoot, a.name, "skills"),
+    ]),
+  ];
+  for (const dir of parts) {
+    if (fs.lstatSync(dir, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      throw new Error(`${dir} is a symlink; render only works on real folders in the vault`);
+    }
+  }
 }
 
 /** What `agents render` would do. Throws, before anything changes, on a broken source. */
@@ -474,6 +518,7 @@ export function planRender(
 ): RenderPlan {
   const agentsRoot = path.join(vaultDir, agentsFolder);
   const sourceRoot = path.join(agentsRoot, SOURCES);
+  checkRealFolders(agentsRoot, known);
   const profiles = known.filter((a) => fs.existsSync(path.join(agentsRoot, a.name)));
   const items: RenderItem[] = [];
   const planned = new Set<string>();
@@ -515,7 +560,12 @@ export function planRender(
       if (!entry.isDirectory() || planned.has(rel)) continue;
       const dir = path.join(skillsRoot, entry.name);
       if (!readMarker(dir)) continue; // a hand-written skill: not render's
-      const unedited = generatedUnedited(readTree(dir));
+      let unedited = false;
+      try {
+        unedited = generatedUnedited(readTree(dir));
+      } catch {
+        // a symlink inside: not something render wrote
+      }
       items.push({
         skill: entry.name,
         agent: agent.name,
@@ -523,6 +573,7 @@ export function planRender(
         rel,
         state: unedited ? "orphan" : "orphan-edited",
         action: !opts.prune ? "keep" : unedited || opts.replace ? "remove" : "conflict",
+        seen: hashTree(dir),
       });
     }
   }
@@ -531,38 +582,52 @@ export function planRender(
 
 function stateOf(
   dir: string,
-  files: Map<string, Buffer>,
+  files: SkillFiles,
   opts: RenderOptions,
-): { state: RenderState; action: RenderAction } {
+): { state: RenderState; action: RenderAction; seen?: string } {
   const st = fs.lstatSync(dir, { throwIfNoEntry: false });
   if (!st) return { state: "missing", action: "write" };
-  const conflict = (state: RenderState) => ({
+  const conflict = (state: RenderState, seen?: string) => ({
     state,
     action: (opts.replace && !st.isSymbolicLink() ? "replace" : "conflict") as RenderAction,
+    seen,
   });
   if (!st.isDirectory() || !readMarker(dir)) return conflict("hand-written");
-  let current: Map<string, Buffer>;
+  let current: SkillFiles;
   try {
     current = readTree(dir);
   } catch {
     return conflict("edited"); // a symlink inside: not something render wrote
   }
-  if (sameFiles(current, files)) return { state: "current", action: "none" };
-  if (generatedUnedited(current)) return { state: "stale", action: "update" };
-  return conflict("edited");
+  const seen = hashFiles(current);
+  if (sameFiles(current, files)) return { state: "current", action: "none", seen };
+  if (generatedUnedited(current)) return { state: "stale", action: "update", seen };
+  return conflict("edited", seen);
 }
 
 export interface RenderResult {
   plan: RenderPlan;
-  /** Where replaced or removed copies that held hand edits were saved. */
+  /** Where copies that held hand edits were saved before being replaced or removed. */
   backupDir: string | null;
+  /** Copies that changed after the plan was made; left as they were. */
+  changed: RenderItem[];
+}
+
+function writeFiles(dir: string, files: SkillFiles): void {
+  for (const [rel, { bytes, exec }] of files) {
+    const file = path.join(dir, ...rel.split("/"));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, bytes);
+    fs.chmodSync(file, exec ? 0o755 : 0o644);
+  }
 }
 
 /**
  * Write the plan: new and stale copies, and with the options, replacements
- * and removals. Each copy is written next to its place and swapped in, so a
- * failure leaves the old copy whole. A copy that held hand edits is moved to
- * big-brain's backups first, never deleted.
+ * and removals. A copy is staged beside the profiles and swapped in; a
+ * failed swap puts the old copy back. A copy that held hand edits is moved
+ * to big-brain's backups, never deleted. A copy that changed after the plan
+ * was made is left as it is and reported, since the plan never saw that edit.
  */
 export function applyRender(
   vaultDir: string,
@@ -572,7 +637,8 @@ export function applyRender(
 ): RenderResult {
   const agentsRoot = path.join(vaultDir, agentsFolder);
   let backupDir: string | null = null;
-  const backup = (item: RenderItem): void => {
+  const changed: RenderItem[] = [];
+  const backup = (from: string, item: RenderItem): void => {
     backupDir ??= path.join(
       stateDir(sys),
       "backups",
@@ -581,44 +647,50 @@ export function applyRender(
     );
     const to = path.join(backupDir, item.agent, item.skill);
     fs.mkdirSync(path.dirname(to), { recursive: true });
-    moveAcross(item.dir, to);
+    moveAcross(from, to);
   };
   const handEdited = (item: RenderItem) =>
     item.state === "edited" || item.state === "hand-written" || item.state === "orphan-edited";
 
   for (const item of plan.items) {
-    if (item.action === "remove") {
-      if (handEdited(item)) backup(item);
-      else fs.rmSync(item.dir, { recursive: true, force: true });
+    const writes = item.action === "write" || item.action === "update" || item.action === "replace";
+    if (!writes && item.action !== "remove") continue;
+    const exists = fs.lstatSync(item.dir, { throwIfNoEntry: false }) !== undefined;
+    if (exists !== (item.action !== "write")) {
+      changed.push(item); // created, or removed, since the plan
       continue;
     }
-    if (item.action !== "write" && item.action !== "update" && item.action !== "replace") continue;
-    const files = item.files as Map<string, Buffer>;
     const tmp = fs.mkdtempSync(path.join(agentsRoot, ".render-"));
+    const aside = path.join(tmp, "old");
+    const staged = path.join(tmp, "new");
     try {
-      for (const [rel, bytes] of files) {
-        const file = path.join(tmp, ...rel.split("/"));
-        fs.mkdirSync(path.dirname(file), { recursive: true });
-        fs.writeFileSync(file, bytes);
+      if (writes) writeFiles(staged, item.files as SkillFiles);
+      if (exists) {
+        // Moved aside first, then checked: an edit can't slip in between the
+        // check and the swap.
+        moveAcross(item.dir, aside);
+        if (!handEdited(item) && (item.seen === undefined || hashTree(aside) !== item.seen)) {
+          moveAcross(aside, item.dir);
+          changed.push(item);
+          continue;
+        }
       }
-      fs.mkdirSync(path.dirname(item.dir), { recursive: true });
-      if (item.action === "replace") backup(item);
-      else if (item.action === "update") {
-        const old = `${tmp}-old`;
-        fs.renameSync(item.dir, old);
+      if (writes) {
         try {
-          fs.renameSync(tmp, item.dir);
+          fs.mkdirSync(path.dirname(item.dir), { recursive: true });
+          moveAcross(staged, item.dir);
         } catch (err) {
-          fs.renameSync(old, item.dir);
+          if (exists) moveAcross(aside, item.dir);
           throw err;
         }
-        fs.rmSync(old, { recursive: true, force: true });
-        continue;
       }
-      fs.renameSync(tmp, item.dir);
+      if (exists) {
+        if (handEdited(item)) backup(aside, item);
+        else fs.rmSync(aside, { recursive: true, force: true });
+      }
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   }
-  return { plan, backupDir };
+  return { plan, backupDir, changed };
 }

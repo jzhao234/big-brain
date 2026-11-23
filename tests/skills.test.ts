@@ -59,10 +59,11 @@ describe("bundled skill sources", () => {
         expect([...shipped.keys()].sort(), `${agent.name}/${name}`).toEqual(
           [...rendered.keys()].sort(),
         );
-        for (const [rel, bytes] of rendered) {
-          expect(shipped.get(rel)?.toString("utf8"), `${agent.name}/${name}/${rel}`).toBe(
-            bytes.toString("utf8"),
+        for (const [rel, file] of rendered) {
+          expect(shipped.get(rel)?.bytes.toString("utf8"), `${agent.name}/${name}/${rel}`).toBe(
+            file.bytes.toString("utf8"),
           );
+          expect(shipped.get(rel)?.exec, `${agent.name}/${name}/${rel} mode`).toBe(file.exec);
         }
       }
     }

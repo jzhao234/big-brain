@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import yaml from "js-yaml";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AGENTS, agentPaths, getAgent, installAgent, saveToProfile } from "../src/core/agents.js";
 import { parseFrontmatter } from "../src/core/frontmatter.js";
 import { generatedUnedited, readMarker, readTree } from "../src/core/skill-marker.js";
@@ -81,6 +81,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -251,7 +252,7 @@ describe("renderSkill", () => {
     const a = renderSkill(s, getAgent("codex"), { marker: "agents/skills/test/SKILL.md" });
     const b = renderSkill(s, getAgent("codex"), { marker: "agents/skills/test/SKILL.md" });
     expect([...a.keys()]).toEqual([...b.keys()]);
-    for (const [rel, bytes] of a) expect(bytes.equals(b.get(rel) as Buffer)).toBe(true);
+    for (const [rel, file] of a) expect(file.bytes.equals(b.get(rel)?.bytes as Buffer)).toBe(true);
   });
 });
 
@@ -396,6 +397,143 @@ describe("planRender and applyRender", () => {
       "codex",
       "skills",
     ]);
+  });
+});
+
+describe("review fixes", () => {
+  it("leaves a copy edited after the plan was made as it is", () => {
+    source("test", TEST_SKILL);
+    render();
+    source("test", TEST_SKILL.replace("Shared tail.", "New tail."));
+    const plan = planRender(vaultDir, "agents");
+    fs.appendFileSync(out("claude", "test"), "Concurrent edit.\n");
+    const result = applyRender(vaultDir, "agents", plan, sys());
+    expect(read("claude", "test")).toContain("Concurrent edit.");
+    expect(read("claude", "test")).not.toContain("New tail.");
+    expect(result.changed.map((i) => i.rel)).toEqual(["claude/skills/test"]);
+    expect(read("codex", "test")).toContain("New tail.");
+  });
+
+  it("never writes over a folder created after the plan was made", () => {
+    source("test", TEST_SKILL);
+    const plan = planRender(vaultDir, "agents");
+    write(out("agy", "test"), "mine\n");
+    const result = applyRender(vaultDir, "agents", plan, sys());
+    expect(read("agy", "test")).toBe("mine\n");
+    expect(result.changed.map((i) => i.rel)).toEqual(["agy/skills/test"]);
+  });
+
+  it("keeps an orphan edited after the plan was made", () => {
+    source("x", "---\nname: x\ndescription: X.\n---\n");
+    render();
+    fs.rmSync(path.join(vaultDir, "agents", "skills", "x"), { recursive: true });
+    const plan = planRender(vaultDir, "agents", { prune: true });
+    fs.appendFileSync(out("codex", "x"), "late edit\n");
+    applyRender(vaultDir, "agents", plan, sys());
+    expect(read("codex", "x")).toContain("late edit");
+    expect(fs.existsSync(out("claude", "x"))).toBe(false);
+  });
+
+  it("puts the old copy back when the swap fails", () => {
+    source("test", TEST_SKILL);
+    render();
+    source("test", TEST_SKILL.replace("Shared tail.", "New tail."));
+    const plan = planRender(vaultDir, "agents");
+    const rename = fs.renameSync;
+    let failed = false;
+    vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
+      if (!failed && String(from).endsWith(`${path.sep}new`)) {
+        failed = true;
+        throw Object.assign(new Error("disk full"), { code: "ENOSPC" });
+      }
+      return rename(from, to);
+    });
+    expect(() => applyRender(vaultDir, "agents", plan, sys())).toThrow(/disk full/);
+    expect(read("claude", "test")).toContain("Shared tail.");
+  });
+
+  it("refuses symlinked folders, so --prune can't reach another vault", () => {
+    const other = path.join(root, "other-skills");
+    fs.mkdirSync(other);
+    fs.symlinkSync(other, path.join(vaultDir, "agents", "claude", "skills"));
+    source("test", TEST_SKILL);
+    expect(() => planRender(vaultDir, "agents", { prune: true })).toThrow(/is a symlink/);
+  });
+
+  it("keeps executable bits and notices when they change", () => {
+    const dir = source("x", "---\nname: x\ndescription: X.\n---\n", { "scripts/run.sh": "echo\n" });
+    fs.chmodSync(path.join(dir, "scripts", "run.sh"), 0o755);
+    render();
+    expect(fs.statSync(out("codex", "x", "scripts/run.sh")).mode & 0o111).not.toBe(0);
+    fs.chmodSync(path.join(dir, "scripts", "run.sh"), 0o644);
+    const plan = planRender(vaultDir, "agents");
+    expect(plan.items.map((i) => i.state)).toEqual(["stale", "stale", "stale"]);
+    applyRender(vaultDir, "agents", plan, sys());
+    expect(fs.statSync(out("codex", "x", "scripts/run.sh")).mode & 0o111).toBe(0);
+  });
+
+  it("counts code inside list items as code", () => {
+    const text = [
+      "- step:",
+      "  ```md",
+      "  <!-- only: codex -->",
+      "  ```",
+      "1. ```",
+      "   <!-- /only -->",
+      "   ```",
+      "    ~~~",
+      "    <!-- only: agy -->",
+      "    ~~~",
+      "<!-- only: codex -->",
+      "codex",
+      "<!-- /only -->",
+      "end",
+    ].join("\n");
+    const claude = selectLines(text, getAgent("claude"), AGENTS, "t");
+    expect(claude).toContain("  <!-- only: codex -->");
+    expect(claude).toContain("    <!-- only: agy -->");
+    expect(claude).not.toContain("\ncodex\n");
+    expect(claude.endsWith("end")).toBe(true);
+    expect(
+      selectLines(
+        "```js `x`\n<!-- only: codex -->\nc\n<!-- /only -->\n",
+        getAgent("claude"),
+        AGENTS,
+        "t",
+      ),
+    ).toBe("```js `x`\n");
+  });
+
+  it("classifies an orphan with a symlink inside instead of failing every render", () => {
+    source("x", "---\nname: x\ndescription: X.\n---\n");
+    render();
+    fs.symlinkSync("/etc/hostname", out("codex", "x", "link"));
+    fs.rmSync(path.join(vaultDir, "agents", "skills", "x"), { recursive: true });
+    const plan = planRender(vaultDir, "agents", { prune: true });
+    expect(plan.items.find((i) => i.agent === "codex")).toMatchObject({
+      state: "orphan-edited",
+      action: "conflict",
+    });
+    const result = render({ prune: true, replace: true });
+    expect(fs.existsSync(out("codex", "x"))).toBe(false);
+    expect(
+      fs.lstatSync(path.join(result.backupDir as string, "codex", "x", "link")).isSymbolicLink(),
+    ).toBe(true);
+  });
+
+  it("treats bytes that aren't valid UTF-8 as a hand edit", () => {
+    source("x", "---\nname: x\ndescription: X.\n---\n\nMark � here.\n");
+    render();
+    const file = out("claude", "x");
+    const bytes = fs.readFileSync(file);
+    const at = bytes.indexOf(Buffer.from("�", "utf8"));
+    fs.writeFileSync(
+      file,
+      Buffer.concat([bytes.subarray(0, at), Buffer.from([0xff]), bytes.subarray(at + 3)]),
+    );
+    expect(planRender(vaultDir, "agents").items.find((i) => i.agent === "claude")?.state).toBe(
+      "edited",
+    );
   });
 });
 

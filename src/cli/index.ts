@@ -1081,10 +1081,17 @@ agents
       }
       if (opts.check) console.log(pc.dim("Check: nothing will change.\n"));
       const result = opts.check ? null : applyRender(vault.dir, folder, plan);
+      const changed = new Set(result?.changed ?? []);
       let shown = 0;
       for (const item of plan.items) {
         if (item.action === "none" && !opts.verbose) continue;
         shown++;
+        if (changed.has(item)) {
+          console.log(
+            `  ${pc.red("!")} ${folder}/${item.rel}: changed while render ran, so it was left as it was; render again to see it`,
+          );
+          continue;
+        }
         console.log(
           renderLine(
             item,
@@ -1100,7 +1107,7 @@ agents
         );
       }
       const off = plan.items.filter((i) => i.state !== "current").length;
-      const conflicts = plan.items.filter((i) => i.action === "conflict").length;
+      const conflicts = plan.items.filter((i) => i.action === "conflict").length + changed.size;
       if (opts.check ? off > 0 : conflicts > 0) process.exitCode = 1;
       if (
         !opts.check &&
