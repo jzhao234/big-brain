@@ -14,6 +14,7 @@ import {
   planSettings,
   readState,
   saveToProfile,
+  treeHash,
 } from "../src/core/agents.js";
 import { initVault } from "../src/core/scaffold.js";
 import { Vault } from "../src/core/vault.js";
@@ -172,6 +173,56 @@ describe("installAgent: links", () => {
     const again = installAgent(paths("codex"));
     expect(again.links.find((l) => l.entry.rel === "skills/brain")?.state).toBe("copy-differs");
     expect(fs.readFileSync(skill, "utf8")).toBe("my edit");
+  });
+
+  it("updates an unedited bundled copy from an older version", () => {
+    installAgent(paths("codex"));
+    const copy = path.join(home("codex"), "skills/brain");
+    const skill = path.join(copy, "SKILL.md");
+    const packaged = fs.readFileSync(skill, "utf8");
+    expect(readState(paths("codex")).bundled["skills/brain"]).toBe(treeHash(copy));
+
+    // Stand in for a copy an older big-brain made: change it and record it as big-brain's.
+    fs.writeFileSync(skill, "older bundled text");
+    const brainPlan = () =>
+      installAgent(paths("codex"), { dryRun: true }).links.find(
+        (l) => l.entry.rel === "skills/brain",
+      );
+    expect(brainPlan()).toMatchObject({ state: "copy-differs", action: "keep" });
+    const state = readState(paths("codex"));
+    state.bundled["skills/brain"] = treeHash(copy);
+    fs.writeFileSync(paths("codex").stateFile, JSON.stringify(state));
+    expect(brainPlan()).toMatchObject({ state: "outdated", action: "update" });
+
+    const report = installAgent(paths("codex"));
+
+    expect(fs.readFileSync(skill, "utf8")).toBe(packaged);
+    expect(
+      fs.readFileSync(path.join(report.backupDir!, "files/skills/brain/SKILL.md"), "utf8"),
+    ).toBe("older bundled text");
+    expect(brainPlan()).toMatchObject({ state: "copied", action: "keep" });
+  });
+
+  it("keeps an edited bundled copy, and --replace backs it up and copies big-brain's", () => {
+    installAgent(paths("codex"));
+    const skill = path.join(home("codex"), "skills/brain/SKILL.md");
+    const packaged = fs.readFileSync(skill, "utf8");
+    fs.writeFileSync(skill, "my edit");
+
+    installAgent(paths("codex"));
+    expect(fs.readFileSync(skill, "utf8")).toBe("my edit");
+    // Keeping the edit keeps the record of big-brain's copy, so it still reads as edited.
+    expect(
+      installAgent(paths("codex"), { dryRun: true }).links.find(
+        (l) => l.entry.rel === "skills/brain",
+      )?.state,
+    ).toBe("copy-differs");
+
+    const replaced = installAgent(paths("codex"), { replace: true });
+    expect(fs.readFileSync(skill, "utf8")).toBe(packaged);
+    expect(
+      fs.readFileSync(path.join(replaced.backupDir!, "files/skills/brain/SKILL.md"), "utf8"),
+    ).toBe("my edit");
   });
 
   it("honors CLAUDE_CONFIG_DIR / CODEX_HOME", () => {
