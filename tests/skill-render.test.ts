@@ -42,7 +42,7 @@ function read(agent: string, name: string, rel = "SKILL.md"): string {
 }
 
 function render(opts = {}) {
-  return applyRender(vaultDir, "agents", planRender(vaultDir, "agents", opts), sys());
+  return applyRender(planRender(vaultDir, "agents", opts), sys());
 }
 
 const TEST_SKILL = `---
@@ -286,7 +286,7 @@ describe("planRender and applyRender", () => {
       ["codex", "stale", "update"],
       ["agy", "stale", "update"],
     ]);
-    applyRender(vaultDir, "agents", plan, sys());
+    applyRender(plan, sys());
     expect(read("agy", "test")).toContain("New tail.");
     expect(planRender(vaultDir, "agents").items.every((i) => i.state === "current")).toBe(true);
   });
@@ -301,7 +301,7 @@ describe("planRender and applyRender", () => {
       state: "edited",
       action: "conflict",
     });
-    applyRender(vaultDir, "agents", plan, sys());
+    applyRender(plan, sys());
     expect(read("claude", "test")).toContain("A lesson learned.");
     expect(read("codex", "test")).toContain("New tail.");
 
@@ -328,7 +328,7 @@ describe("planRender and applyRender", () => {
       state: "hand-written",
       action: "conflict",
     });
-    applyRender(vaultDir, "agents", plan, sys());
+    applyRender(plan, sys());
     expect(read("agy", "test")).toContain("mine");
     const result = render({ replace: true });
     expect(read("agy", "test")).toContain("agy runs this");
@@ -360,7 +360,7 @@ describe("planRender and applyRender", () => {
       state: "orphan-edited",
       action: "conflict",
     });
-    applyRender(vaultDir, "agents", plan, sys());
+    applyRender(plan, sys());
     expect(fs.existsSync(out("codex", "test"))).toBe(true);
 
     const result = render({ prune: true, replace: true });
@@ -407,7 +407,7 @@ describe("review fixes", () => {
     source("test", TEST_SKILL.replace("Shared tail.", "New tail."));
     const plan = planRender(vaultDir, "agents");
     fs.appendFileSync(out("claude", "test"), "Concurrent edit.\n");
-    const result = applyRender(vaultDir, "agents", plan, sys());
+    const result = applyRender(plan, sys());
     expect(read("claude", "test")).toContain("Concurrent edit.");
     expect(read("claude", "test")).not.toContain("New tail.");
     expect(result.changed.map((i) => i.rel)).toEqual(["claude/skills/test"]);
@@ -418,7 +418,7 @@ describe("review fixes", () => {
     source("test", TEST_SKILL);
     const plan = planRender(vaultDir, "agents");
     write(out("agy", "test"), "mine\n");
-    const result = applyRender(vaultDir, "agents", plan, sys());
+    const result = applyRender(plan, sys());
     expect(read("agy", "test")).toBe("mine\n");
     expect(result.changed.map((i) => i.rel)).toEqual(["agy/skills/test"]);
   });
@@ -429,7 +429,7 @@ describe("review fixes", () => {
     fs.rmSync(path.join(vaultDir, "agents", "skills", "x"), { recursive: true });
     const plan = planRender(vaultDir, "agents", { prune: true });
     fs.appendFileSync(out("codex", "x"), "late edit\n");
-    applyRender(vaultDir, "agents", plan, sys());
+    applyRender(plan, sys());
     expect(read("codex", "x")).toContain("late edit");
     expect(fs.existsSync(out("claude", "x"))).toBe(false);
   });
@@ -448,7 +448,7 @@ describe("review fixes", () => {
       }
       return rename(from, to);
     });
-    expect(() => applyRender(vaultDir, "agents", plan, sys())).toThrow(/disk full/);
+    expect(() => applyRender(plan, sys())).toThrow(/disk full/);
     expect(read("claude", "test")).toContain("Shared tail.");
   });
 
@@ -468,7 +468,7 @@ describe("review fixes", () => {
     fs.chmodSync(path.join(dir, "scripts", "run.sh"), 0o644);
     const plan = planRender(vaultDir, "agents");
     expect(plan.items.map((i) => i.state)).toEqual(["stale", "stale", "stale"]);
-    applyRender(vaultDir, "agents", plan, sys());
+    applyRender(plan, sys());
     expect(fs.statSync(out("codex", "x", "scripts/run.sh")).mode & 0o111).toBe(0);
   });
 
@@ -534,6 +534,51 @@ describe("review fixes", () => {
     expect(planRender(vaultDir, "agents").items.find((i) => i.agent === "claude")?.state).toBe(
       "edited",
     );
+  });
+});
+
+describe("review fixes, round 2", () => {
+  it("keeps a hand-edited copy in place when its backup can't be written", () => {
+    source("test", TEST_SKILL);
+    render();
+    fs.appendFileSync(out("claude", "test"), "A lesson learned.\n");
+    fs.writeFileSync(path.join(root, "state"), "a file where the state folder should be");
+    const plan = planRender(vaultDir, "agents", { replace: true });
+    expect(() => applyRender(plan, sys())).toThrow();
+    expect(read("claude", "test")).toContain("A lesson learned.");
+    expect(fs.readdirSync(path.join(vaultDir, "agents", "claude", "skills"))).toEqual(["test"]);
+  });
+
+  it("refuses an agents folder reached through a symlinked parent", () => {
+    const elsewhere = path.join(root, "elsewhere");
+    fs.mkdirSync(path.join(elsewhere, "agents", "claude", "skills"), { recursive: true });
+    fs.symlinkSync(elsewhere, path.join(vaultDir, "config"));
+    expect(() => planRender(vaultDir, "config/agents", { prune: true })).toThrow(/is a symlink/);
+  });
+
+  it("closes a fence only at its own blockquote depth", () => {
+    const text = [
+      "~~~",
+      "> ~~~",
+      "<!-- only: codex -->",
+      "~~~",
+      "<!-- only: codex -->",
+      "codex",
+      "<!-- /only -->",
+      "end",
+    ].join("\n");
+    expect(selectLines(text, getAgent("claude"), AGENTS, "t")).toBe(
+      ["~~~", "> ~~~", "<!-- only: codex -->", "~~~", "end"].join("\n"),
+    );
+  });
+
+  it("stages copies in hidden folders that install never reads as skills", () => {
+    source("test", TEST_SKILL);
+    render();
+    fs.mkdirSync(path.join(vaultDir, "agents", "claude", "skills", ".render-abc"));
+    const p = agentPaths(vaultDir, "agents", getAgent("claude"), sys());
+    expect(() => installAgent(p, { dryRun: true })).not.toThrow();
+    expect(planRender(vaultDir, "agents", { prune: true }).items).toHaveLength(3);
   });
 });
 

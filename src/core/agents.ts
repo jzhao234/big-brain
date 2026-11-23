@@ -334,6 +334,8 @@ export function collectEntries(p: AgentPaths): Entry[] {
     for (const entry of fs
       .readdirSync(skillsRoot, { withFileTypes: true })
       .sort((a, b) => a.name.localeCompare(b.name))) {
+      // Hidden folders are not skills (agents render stages copies in them).
+      if (entry.name.startsWith(".")) continue;
       const abs = path.join(skillsRoot, entry.name);
       if (entry.isSymbolicLink()) {
         throw new Error(`Symlinks are not allowed in an agent profile: skills/${entry.name}`);

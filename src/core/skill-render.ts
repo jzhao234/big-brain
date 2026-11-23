@@ -197,7 +197,8 @@ const ONLY_OPEN_RE = /^\s*<!--\s*only:\s*(.*?)\s*-->\s*$/;
 const ONLY_CLOSE_RE = /^\s*<!--\s*\/only\s*-->\s*$/;
 // A fence may sit after list markers or blockquote `>`s, at any indent, so
 // code inside a list item counts as code too.
-const FENCE_RE = /^\s*(?:(?:[-*+]|\d{1,9}[.)])\s+|>\s?)*(`{3,}|~{3,})(.*)$/;
+const FENCE_RE = /^(\s*(?:(?:[-*+]|\d{1,9}[.)])\s+|>\s?)*)(`{3,}|~{3,})(.*)$/;
+const quotes = (prefix: string) => prefix.split(">").length - 1;
 
 /**
  * Keep the lines meant for `agent`: text inside `<!-- only: ... -->` blocks
@@ -213,7 +214,7 @@ export function selectLines(
 ): string {
   const names = new Set(known.map((a) => a.name));
   const out: string[] = [];
-  let fence: string | null = null;
+  let fence: { ticks: string; quotes: number } | null = null;
   let only: Set<string> | null = null;
   let openedAt = 0;
   let collapse = false;
@@ -245,18 +246,24 @@ export function selectLines(
       }
     }
     const fenceMatch = FENCE_RE.exec(bare);
-    if (fence === null && fenceMatch) {
-      // A backtick fence's info string can't hold a backtick (that's inline code).
-      const ticks = fenceMatch[1] as string;
-      if (!(ticks[0] === "`" && (fenceMatch[2] as string).includes("`"))) fence = ticks;
-    } else if (
-      fence !== null &&
-      fenceMatch &&
-      (fenceMatch[1] as string)[0] === fence[0] &&
-      (fenceMatch[1] as string).length >= fence.length &&
-      (fenceMatch[2] as string).trim() === ""
-    ) {
-      fence = null;
+    if (fenceMatch) {
+      const [, prefix, ticks, rest] = fenceMatch as unknown as [string, string, string, string];
+      if (fence === null) {
+        // A backtick fence's info string can't hold a backtick (that's inline code).
+        if (!(ticks[0] === "`" && rest.includes("`"))) {
+          fence = { ticks, quotes: quotes(prefix) };
+        }
+      } else if (
+        ticks[0] === fence.ticks[0] &&
+        ticks.length >= fence.ticks.length &&
+        rest.trim() === "" &&
+        // A closing fence never starts a list item, and sits in the same
+        // blockquote depth as its opener: `> ~~~` inside a plain ~~~ block is code.
+        /^[\s>]*$/.test(prefix) &&
+        quotes(prefix) === fence.quotes
+      ) {
+        fence = null;
+      }
     }
     if (only && !only.has(agent.name)) continue;
     if (collapse && bare.trim() === "" && (out.length === 0 || out.at(-1)?.trim() === "")) {
@@ -493,9 +500,13 @@ function sameFiles(a: SkillFiles, b: SkillFiles): boolean {
  * agents folder, profile, skills folder or source folder could point at
  * another vault, whose copies `--prune` would then delete.
  */
-function checkRealFolders(agentsRoot: string, agents: readonly AgentDef[]): void {
+function checkRealFolders(vaultDir: string, agentsRoot: string, agents: readonly AgentDef[]): void {
+  const ancestors: string[] = [];
+  for (let dir = agentsRoot; dir.startsWith(`${vaultDir}${path.sep}`); dir = path.dirname(dir)) {
+    ancestors.push(dir);
+  }
   const parts = [
-    agentsRoot,
+    ...ancestors,
     path.join(agentsRoot, SOURCES),
     ...agents.flatMap((a) => [
       path.join(agentsRoot, a.name),
@@ -516,9 +527,9 @@ export function planRender(
   opts: RenderOptions = {},
   known: readonly AgentDef[] = AGENTS,
 ): RenderPlan {
-  const agentsRoot = path.join(vaultDir, agentsFolder);
+  const agentsRoot = path.resolve(vaultDir, agentsFolder);
   const sourceRoot = path.join(agentsRoot, SOURCES);
-  checkRealFolders(agentsRoot, known);
+  checkRealFolders(path.resolve(vaultDir), agentsRoot, known);
   const profiles = known.filter((a) => fs.existsSync(path.join(agentsRoot, a.name)));
   const items: RenderItem[] = [];
   const planned = new Set<string>();
@@ -557,12 +568,17 @@ export function planRender(
       .readdirSync(skillsRoot, { withFileTypes: true })
       .sort((a, b) => a.name.localeCompare(b.name))) {
       const rel = `${agent.name}/skills/${entry.name}`;
-      if (!entry.isDirectory() || planned.has(rel)) continue;
+      if (entry.name.startsWith(".") || !entry.isDirectory() || planned.has(rel)) continue;
       const dir = path.join(skillsRoot, entry.name);
       if (!readMarker(dir)) continue; // a hand-written skill: not render's
+      // One read gives both the state and the hash apply rechecks, so an
+      // edit can't land between them.
       let unedited = false;
+      let seen: string | undefined;
       try {
-        unedited = generatedUnedited(readTree(dir));
+        const tree = readTree(dir);
+        unedited = generatedUnedited(tree);
+        seen = hashFiles(tree);
       } catch {
         // a symlink inside: not something render wrote
       }
@@ -573,7 +589,7 @@ export function planRender(
         rel,
         state: unedited ? "orphan" : "orphan-edited",
         action: !opts.prune ? "keep" : unedited || opts.replace ? "remove" : "conflict",
-        seen: hashTree(dir),
+        seen,
       });
     }
   }
@@ -624,21 +640,18 @@ function writeFiles(dir: string, files: SkillFiles): void {
 
 /**
  * Write the plan: new and stale copies, and with the options, replacements
- * and removals. A copy is staged beside the profiles and swapped in; a
- * failed swap puts the old copy back. A copy that held hand edits is moved
- * to big-brain's backups, never deleted. A copy that changed after the plan
- * was made is left as it is and reported, since the plan never saw that edit.
+ * and removals. Each copy is staged in a hidden folder beside its place and
+ * renamed in, which fails rather than merging if something else took the
+ * place meanwhile. A copy that held hand edits goes to big-brain's backups
+ * before anything takes its place, and is put back if the swap fails. A copy
+ * that changed after the plan was made is left as it is and reported, since
+ * the plan never saw that edit. If even putting an old copy back fails, it
+ * stays in the hidden folder and the error says where.
  */
-export function applyRender(
-  vaultDir: string,
-  agentsFolder: string,
-  plan: RenderPlan,
-  sys: SystemEnv = defaultSystem(),
-): RenderResult {
-  const agentsRoot = path.join(vaultDir, agentsFolder);
+export function applyRender(plan: RenderPlan, sys: SystemEnv = defaultSystem()): RenderResult {
   let backupDir: string | null = null;
   const changed: RenderItem[] = [];
-  const backup = (from: string, item: RenderItem): void => {
+  const backup = (from: string, item: RenderItem): string => {
     backupDir ??= path.join(
       stateDir(sys),
       "backups",
@@ -648,6 +661,7 @@ export function applyRender(
     const to = path.join(backupDir, item.agent, item.skill);
     fs.mkdirSync(path.dirname(to), { recursive: true });
     moveAcross(from, to);
+    return to;
   };
   const handEdited = (item: RenderItem) =>
     item.state === "edited" || item.state === "hand-written" || item.state === "orphan-edited";
@@ -660,36 +674,53 @@ export function applyRender(
       changed.push(item); // created, or removed, since the plan
       continue;
     }
-    const tmp = fs.mkdtempSync(path.join(agentsRoot, ".render-"));
+    const parent = path.dirname(item.dir);
+    fs.mkdirSync(parent, { recursive: true });
+    // Staged beside its place (agents list no hidden folders as skills), so
+    // every move below is a same-filesystem rename.
+    const tmp = fs.mkdtempSync(path.join(parent, ".render-"));
     const aside = path.join(tmp, "old");
     const staged = path.join(tmp, "new");
     try {
       if (writes) writeFiles(staged, item.files as SkillFiles);
+      let saved: string | null = null;
       if (exists) {
         // Moved aside first, then checked: an edit can't slip in between the
         // check and the swap.
-        moveAcross(item.dir, aside);
+        fs.renameSync(item.dir, aside);
         if (!handEdited(item) && (item.seen === undefined || hashTree(aside) !== item.seen)) {
-          moveAcross(aside, item.dir);
+          fs.renameSync(aside, item.dir);
           changed.push(item);
           continue;
+        }
+        if (handEdited(item)) {
+          try {
+            saved = backup(aside, item);
+          } catch (err) {
+            fs.renameSync(aside, item.dir);
+            throw err;
+          }
         }
       }
       if (writes) {
         try {
-          fs.mkdirSync(path.dirname(item.dir), { recursive: true });
-          moveAcross(staged, item.dir);
+          fs.renameSync(staged, item.dir);
         } catch (err) {
-          if (exists) moveAcross(aside, item.dir);
+          if (saved) moveAcross(saved, item.dir);
+          else if (exists) fs.renameSync(aside, item.dir);
           throw err;
         }
       }
-      if (exists) {
-        if (handEdited(item)) backup(aside, item);
-        else fs.rmSync(aside, { recursive: true, force: true });
+      if (exists && !handEdited(item)) fs.rmSync(aside, { recursive: true, force: true });
+    } catch (err) {
+      if (fs.existsSync(aside)) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(`${message} (the previous ${item.rel} is kept in ${aside})`);
       }
+      throw err;
     } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.rmSync(staged, { recursive: true, force: true });
+      if (!fs.existsSync(aside)) fs.rmSync(tmp, { recursive: true, force: true });
     }
   }
   return { plan, backupDir, changed };

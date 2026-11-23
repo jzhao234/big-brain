@@ -1080,7 +1080,7 @@ agents
         return console.log(pc.dim(`No skill sources in ${folder}/skills.`));
       }
       if (opts.check) console.log(pc.dim("Check: nothing will change.\n"));
-      const result = opts.check ? null : applyRender(vault.dir, folder, plan);
+      const result = opts.check ? null : applyRender(plan);
       const changed = new Set(result?.changed ?? []);
       let shown = 0;
       for (const item of plan.items) {
