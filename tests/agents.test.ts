@@ -255,6 +255,41 @@ describe("installAgent: links", () => {
     expect(fs.readFileSync(path.join(copy, "SKILL.md"), "utf8")).not.toBe("older bundled text");
   });
 
+  it("reports a cross-device move that deleted only part of the original", () => {
+    installAgent(paths("codex"));
+    const copy = path.join(home("codex"), "skills/brain");
+    fs.writeFileSync(path.join(copy, "SKILL.md"), "older bundled text");
+    const state = readState(paths("codex"));
+    state.bundled["skills/brain"] = treeHash(copy);
+    fs.writeFileSync(paths("codex").stateFile, JSON.stringify(state));
+    const rename = fs.renameSync;
+    vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
+      if (
+        String(from).startsWith(userHome) &&
+        String(to).includes(`${path.sep}backups${path.sep}`)
+      ) {
+        throw Object.assign(new Error("cross-device link"), { code: "EXDEV" });
+      }
+      rename(from, to);
+    });
+    const rm = fs.rmSync;
+    vi.spyOn(fs, "rmSync").mockImplementation((target, opts) => {
+      if (String(target) === copy) {
+        fs.unlinkSync(path.join(copy, "SKILL.md")); // part of it went before the failure
+        throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+      }
+      rm(target, opts);
+    });
+
+    expect(() => installAgent(paths("codex"))).toThrow(/could not be fully rolled back.*backups/);
+    vi.restoreAllMocks();
+    const backups = path.join(root, "state", "big-brain", "backups", "codex");
+    const [run] = fs.readdirSync(backups);
+    expect(fs.readFileSync(path.join(backups, run!, "files/skills/brain/SKILL.md"), "utf8")).toBe(
+      "older bundled text",
+    );
+  });
+
   it("keeps an edited bundled copy, and --replace backs it up and copies big-brain's", () => {
     installAgent(paths("codex"));
     const skill = path.join(home("codex"), "skills/brain/SKILL.md");

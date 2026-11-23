@@ -1031,10 +1031,17 @@ class Backup {
   take(rel: string, mode: "move" | "copy", from = path.join(this.home, rel)): string {
     const to = path.join(this.dir, "files", rel);
     fs.mkdirSync(path.dirname(to), { recursive: true });
-    if (mode === "move") moveAcross(from, to);
-    else fs.cpSync(from, to, { recursive: true, preserveTimestamps: true, dereference: true });
-    this.taken.push({ from, backup: to, mode });
-    this.writeManifest();
+    if (mode === "move") {
+      // Registered first: a move across devices that fails after copying has
+      // already deleted part of the original, and rollback must know.
+      this.taken.push({ from, backup: to, mode });
+      this.writeManifest();
+      moveAcross(from, to);
+    } else {
+      fs.cpSync(from, to, { recursive: true, preserveTimestamps: true, dereference: true });
+      this.taken.push({ from, backup: to, mode });
+      this.writeManifest();
+    }
     return to;
   }
   /** Put moved items back (after removing the link that replaced them). Best effort. */
@@ -1042,6 +1049,8 @@ class Backup {
     let complete = true;
     for (const t of [...this.taken].reverse()) {
       if (t.mode !== "move") continue;
+      // No backup means the move never happened and the original is untouched.
+      if (!fs.lstatSync(t.backup, { throwIfNoEntry: false })) continue;
       const original = t.from;
       try {
         if (fs.lstatSync(original, { throwIfNoEntry: false })?.isSymbolicLink()) {
@@ -1076,7 +1085,12 @@ function moveAcross(from: string, to: string): void {
     fs.renameSync(from, to);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
-    fs.cpSync(from, to, { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
+    try {
+      fs.cpSync(from, to, { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
+    } catch (copyErr) {
+      fs.rmSync(to, { recursive: true, force: true }); // the original is still whole
+      throw copyErr;
+    }
     fs.rmSync(from, { recursive: true, force: true });
   }
 }
