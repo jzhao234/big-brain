@@ -2,9 +2,11 @@
 
 All notable changes to big-brain. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/) (below 1.0, a minor version may change behavior).
 
-## 0.4.1 (2026-11-23)
+## 0.5.0 (2026-11-23)
 
 ### Added
+
+- `big-brain agents render` writes each agent's copy of a skill from one source in `agents/skills/<name>/`, so a skill is written once instead of kept in three copies that drift apart. It handles what differs between agents: `{{/name}}` becomes `/name` or Codex's `$name`, `{{agent}}` names the agent, `<!-- only: codex -->` blocks hold text for some agents, per-agent frontmatter maps (Codex's `agents/openai.yaml` included) sit over the shared keys, and `invocation: explicit` becomes Claude Code's `disable-model-invocation`, Codex's `allow_implicit_invocation: false`, or a sentence in Antigravity's description, since Antigravity accepts only `name` and `description`. Rendering is deterministic, and each copy carries a hash of what render wrote: a copy edited by hand, or a hand-written folder in the way, is reported and kept unless `--replace` (which backs it up first), `--prune` removes copies whose source is gone, and `--check` exits 1 on any difference, for CI. `agents status` and `install` report the same problems, and `agents save` refuses to write over a rendered skill.
 
 - `edit_note` (MCP) and `big-brain edit <note> --old … --new …` replace one exact passage of a note's body and leave the rest of the note as it was. The passage must match exactly once, overlapping matches included (`replace_all` / `--all` replaces every match), so a stale or ambiguous edit fails instead of landing in the wrong place. It never touches the frontmatter (use `update_frontmatter`) and works on a note whose YAML doesn't parse. Before, changing existing text meant `replace_note_body`, which has the agent retype the whole note, a risk of silently dropping facts in a long note.
 - `doctor` reports `stale-summary` (info) when Log entries were added on a later day than the note's Summary (or Overview, or Goal) last changed, the section session context shows. It dates lines with `git blame`, so it runs only in a git vault and skips untracked notes.
@@ -13,6 +15,7 @@ All notable changes to big-brain. The format follows [Keep a Changelog](https://
 
 - `doctor`'s `possible-duplicate` compares runs of five consecutive words instead of the sets of words two notes use, so notes built from one template or about one topic are no longer reported, while copied passages still are. It also runs on vaults of any size: before, it silently skipped vaults with more than 200 notes.
 - `big-brain agents install` keeps big-brain's bundled skills current. It records what it copied, so a copy you haven't edited is updated (and backed up) when big-brain ships a newer version, while an edited copy is still kept and reported; `--replace` now also backs up an edited copy and copies big-brain's. Before, an existing copy was never updated, so `/brain`, `/capture` and `/weekly` stayed at whatever version was first installed.
+- big-brain's bundled `brain`, `capture` and `weekly` skills are each written once and rendered for Claude Code, Codex and agy. Codex's copies now carry the same instructions as the others, and every copy gains the guardrails only Codex's had: never store secrets, keep frontmatter, tags, tasks and links intact, ask before changing a project's status, and don't commit an auto-committed write a second time.
 - The bundled `/brain` and `/weekly` skills (Claude Code, Codex and agy) fix existing text with `edit_note` and keep the Summary current when a Log line changes what it says. `/weekly` refreshes stale Summaries, and for a bloated note it proposes moving old Log entries to an archive note, splitting out only a section that covers a separate topic; the `bloated-note` message says the same.
 
 ## 0.4.0 (2026-11-20)

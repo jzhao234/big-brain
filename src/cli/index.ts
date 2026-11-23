@@ -32,6 +32,13 @@ import { renderOverview, vaultOverview } from "../core/overview.js";
 import { createProject, listProjects, setProjectStatus } from "../core/projects.js";
 import { relatedNotes } from "../core/related.js";
 import { initVault } from "../core/scaffold.js";
+import {
+  applyRender,
+  planRender,
+  type RenderAction,
+  type RenderItem,
+  type RenderPlan,
+} from "../core/skill-render.js";
 import { defaultClaudeSkillsDir, installSkills } from "../core/skills.js";
 import { addTask, completeTask, listTasks, type TaskStatus, updateTask } from "../core/tasks.js";
 import type { TaskItem } from "../core/types.js";
@@ -900,6 +907,73 @@ function printAgentReport(report: InstallReport, verbose: boolean): number {
   return problems;
 }
 
+const RENDER_MARKS: Record<RenderAction, string> = {
+  none: pc.green("✓"),
+  write: pc.green("+"),
+  update: pc.yellow("↻"),
+  replace: pc.yellow("↻"),
+  remove: pc.yellow("−"),
+  keep: pc.yellow("?"),
+  conflict: pc.red("!"),
+};
+
+function renderLine(item: RenderItem, folder: string, done: boolean): string {
+  const source = `${folder}/skills/${item.skill}/SKILL.md`;
+  const where = `${folder}/${item.rel}`;
+  const what = (() => {
+    switch (item.action) {
+      case "none":
+        return "matches its source";
+      case "write":
+        return done ? "written" : "not written yet";
+      case "update":
+        return done ? "updated from its source" : "behind its source";
+      case "replace":
+        return done
+          ? "replaced; the old folder is in the backup below"
+          : `${item.state === "edited" ? "edited by hand" : "a folder render didn't write"}; will be backed up and replaced`;
+      case "remove":
+        return done ? "removed (its source is gone)" : "its source is gone; will be removed";
+      case "keep":
+        return item.state === "orphan-edited"
+          ? "its source is gone, and it was edited by hand (--prune --replace backs it up and removes it)"
+          : "its source is gone or no longer lists this agent (--prune removes it)";
+      case "conflict":
+        return item.state === "edited"
+          ? `edited by hand since the last render; move the change into ${source} and render again (--replace discards it after a backup)`
+          : item.state === "orphan-edited"
+            ? "its source is gone, and it was edited by hand (--replace backs it up and removes it)"
+            : `a folder render didn't write is in the way; delete it once its text is in ${source} (--replace backs it up)`;
+    }
+  })();
+  return `  ${RENDER_MARKS[item.action]} ${where}: ${what}`;
+}
+
+/**
+ * Generated skills that don't match their source, for status and install.
+ * Prints nothing when every copy is current.
+ */
+function printRenderProblems(vaultDir: string, folder: string): void {
+  let plan: RenderPlan;
+  try {
+    plan = planRender(vaultDir, folder);
+  } catch (err) {
+    console.log(pc.bold("Skill sources"));
+    console.log(`  ${pc.red("!")} ${err instanceof Error ? err.message : String(err)}\n`);
+    return;
+  }
+  const off = plan.items.filter((i) => i.state !== "current");
+  if (off.length === 0) return;
+  console.log(pc.bold(`Skill sources ${pc.dim(`(${folder}/skills)`)}`));
+  for (const item of off) console.log(renderLine(item, folder, false));
+  const blocked = off.some((i) => i.state === "edited" || i.state === "hand-written");
+  console.log(
+    pc.dim(
+      `  big-brain agents render writes the copies${blocked ? "; it leaves the ! lines until you decide" : ""}.\n`,
+    ),
+  );
+}
+
 const agents = program
   .command("agents")
   .description(
@@ -915,6 +989,7 @@ agents
       const vault = openVault();
       const folder = vault.config.folders.agents;
       const list = names.length > 0 ? names.map(getAgent) : AGENTS;
+      printRenderProblems(vault.dir, folder);
       for (const agent of list) {
         const p = agentPaths(vault.dir, folder, agent);
         if (!fs.existsSync(p.profile) && !fs.existsSync(p.home)) continue;
@@ -967,6 +1042,7 @@ agents
           );
         }
         if (opts.dryRun) console.log(pc.dim("Dry run: nothing will change.\n"));
+        printRenderProblems(vault.dir, folder);
         let problems = 0;
         for (const agent of list) {
           problems += printAgentReport(
@@ -985,6 +1061,57 @@ agents
       }
     },
   );
+
+agents
+  .command("render")
+  .description(
+    "write each agent's copy of the skills in <agents>/skills, where each skill is written once",
+  )
+  .option("--check", "change nothing; exit 1 when any copy differs from its source")
+  .option("--replace", "back up and overwrite copies edited by hand, and folders in the way")
+  .option("--prune", "remove generated copies whose source is gone")
+  .option("-v, --verbose", "also list copies that already match their source")
+  .action((opts: { check?: boolean; replace?: boolean; prune?: boolean; verbose?: boolean }) => {
+    try {
+      const vault = openVault();
+      const folder = vault.config.folders.agents;
+      const plan = planRender(vault.dir, folder, opts);
+      if (plan.items.length === 0) {
+        return console.log(pc.dim(`No skill sources in ${folder}/skills.`));
+      }
+      if (opts.check) console.log(pc.dim("Check: nothing will change.\n"));
+      const result = opts.check ? null : applyRender(vault.dir, folder, plan);
+      let shown = 0;
+      for (const item of plan.items) {
+        if (item.action === "none" && !opts.verbose) continue;
+        shown++;
+        console.log(
+          renderLine(
+            item,
+            folder,
+            !opts.check && item.action !== "keep" && item.action !== "conflict",
+          ),
+        );
+      }
+      if (shown === 0) console.log(pc.dim("  ✓ every copy matches its source"));
+      if (result?.backupDir) {
+        console.log(
+          pc.dim(`  Folders that held hand edits were saved to ${tilde(result.backupDir)}`),
+        );
+      }
+      const off = plan.items.filter((i) => i.state !== "current").length;
+      const conflicts = plan.items.filter((i) => i.action === "conflict").length;
+      if (opts.check ? off > 0 : conflicts > 0) process.exitCode = 1;
+      if (
+        !opts.check &&
+        plan.items.some((i) => ["write", "update", "replace", "remove"].includes(i.action))
+      ) {
+        console.log(pc.dim(`\nCommit ${folder}/skills and the copies together.`));
+      }
+    } catch (err) {
+      fail(err);
+    }
+  });
 
 agents
   .command("save <agent> [paths...]")

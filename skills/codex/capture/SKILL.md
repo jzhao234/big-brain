@@ -1,26 +1,20 @@
 ---
 name: capture
-description: Quickly capture a thought, fact, idea, or link into the user's Big Brain. Use when the user asks to remember, note down, add to the brain/inbox, or explicitly invokes $capture.
+description: >
+  Quick-capture a thought, idea, link, or fact into the big-brain second brain's
+  inbox. Use when the user types $capture <text>, or says "note this down",
+  "remember this in my brain", "add to my inbox", "capture this idea".
+  Zero-friction: file it now, organize later.
 ---
 
-# Capture to Big Brain
+# capture
 
-Resolve the vault through `big-brain`; do not hardcode its location. Capture
-first and organize later.
+Get it into the vault before it's lost. Don't organize, don't ask clarifying questions; that's what triage is for. The target vault is whatever `big-brain` resolves (`BIG_BRAIN_VAULT` env, `--vault`, or nearest `brain.config.json`); don't hardcode a path.
 
-1. If the user supplies content, lightly clean it without changing meaning and
-   run `big-brain capture "<text>"`.
-2. If the user supplies no content, capture the most recent clearly noteworthy
-   decision, fact, or idea from the conversation. State exactly what you chose.
-3. If it clearly belongs to an existing active project, prefer appending it to
-   that project's Notes/Log through an available Big Brain tool. If only the CLI
-   is available and cannot append arbitrary sections, capture it to the inbox
-   rather than performing a risky rewrite.
-4. If it is actionable, suggest converting it into a project task; do not add
-   the task unless requested or the user already asked to record the action.
+1. If there's an argument, capture it verbatim (lightly cleaned): `big-brain capture "<text>"`. If the note obviously belongs to an active project instead (it names one), append it to that project's `## Notes` and say so.
+2. If there's no argument, capture the most recent noteworthy thing from the conversation (the idea/decision/fact just discussed). State in one line what you captured.
+3. If the capture contains something actionable ("need to", "don't forget to"), also offer: "want this as a task on <project>?" Add the task only if the user says yes.
 
-Never capture secrets, access keys, passwords, tokens, private keys, or raw
-sensitive data. Big Brain writes may auto-commit and auto-push, so do not make a
-second manual commit for the same write.
+Never capture secrets: passwords, tokens, access or private keys, or raw sensitive data.
 
-Confirm in one line what was captured and where. Do not add a report around it.
+Confirm with one line: where it went. Nothing else. (If the vault has git auto-commit on, the capture is committed and pushed automatically; don't commit it again yourself.)

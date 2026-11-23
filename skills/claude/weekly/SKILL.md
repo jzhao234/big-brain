@@ -24,3 +24,5 @@ A guided review of the big-brain vault (whichever `big-brain` resolves via `BIG_
 ## Tone
 
 This is a working meeting, not a report. Short exchanges, concrete proposals, sensible defaults ("I'd archive these three. Any objections?"). The user's time budget is ~10 minutes; don't stretch it.
+
+Keep each note's frontmatter, `area`, tags, tasks, and wikilinks intact, and never store secrets in the vault.
