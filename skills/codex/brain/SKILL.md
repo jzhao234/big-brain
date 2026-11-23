@@ -29,6 +29,11 @@ and latest log entries, then continue with the user's requested work.
 For the rest of the session, keep durable state current as work produces it:
 
 - decisions, progress, or failures → daily log and the relevant project log;
+  when the log line changes what the project's Summary (or Goal) says (state,
+  version, what is open or done), update the Summary too, since the next
+  session sees the Summary, not the log;
+- fixing existing text → `big-brain edit <note> --old "<exact passage>" --new
+  "<replacement>"` (`edit_note`), never retyping the whole note;
 - new multi-step commitment → project;
 - new action → task on the matching project;
 - completed action → mark its existing task done;

@@ -1,8 +1,8 @@
-import { noteRepos, sameRepo } from "./context.js";
-import { uncommittedFiles } from "./git.js";
+import { noteRepos, sameRepo, summaryHeading } from "./context.js";
+import { isGitRepo, lineChangeTimes, uncommittedFiles } from "./git.js";
 import { projectStatus } from "./projects.js";
-import type { DoctorFinding } from "./types.js";
-import { nameKey, todayISO } from "./util.js";
+import type { DoctorFinding, Heading, Note } from "./types.js";
+import { fencedLines, nameKey, todayISO } from "./util.js";
 import { sameRank, type Vault } from "./vault.js";
 
 /** Lint the vault: broken links, duplicate names, stale projects, overdue tasks, hygiene. */
@@ -209,8 +209,8 @@ export function runDoctor(vault: Vault): DoctorFinding[] {
     }
   }
 
-  // Bloated notes: consolidation candidates for splitting (daily notes exempt —
-  // they're logs and are allowed to grow).
+  // Bloated notes: consolidation candidates (daily notes exempt: they're logs
+  // and are allowed to grow).
   for (const note of active) {
     if (note.type === "daily") continue;
     const lines = note.body.split("\n").length;
@@ -218,29 +218,23 @@ export function runDoctor(vault: Vault): DoctorFinding[] {
       findings.push({
         severity: "info",
         rule: "bloated-note",
-        message: `${Math.round(note.body.length / 1000)}KB / ${lines} lines — consider splitting sections into linked notes`,
+        message: `${Math.round(note.body.length / 1000)}KB / ${lines} lines; move old Log entries verbatim to an archive note, or split out a section that covers a separate topic`,
         path: note.path,
       });
     }
   }
 
-  // Possible duplicates: high body-token overlap between two active notes.
-  const tokenSets = active
-    .filter((n) => n.type !== "daily" && n.body.length > 200)
-    .map((n) => ({ path: n.path, tokens: bodyTokens(n.body) }));
-  if (tokenSets.length <= 200) {
-    for (let i = 0; i < tokenSets.length; i++) {
-      for (let j = i + 1; j < tokenSets.length; j++) {
-        const sim = jaccard(tokenSets[i]!.tokens, tokenSets[j]!.tokens);
-        if (sim >= 0.5) {
-          findings.push({
-            severity: "info",
-            rule: "possible-duplicate",
-            message: `${Math.round(sim * 100)}% content overlap with ${tokenSets[j]!.path} — merge or differentiate`,
-            path: tokenSets[i]!.path,
-          });
-        }
-      }
+  // Possible duplicates: two active notes sharing most of their text.
+  findings.push(...possibleDuplicates(active));
+
+  // Summaries behind their Log: session context shows a note's Summary (or
+  // Overview, or Goal), so Log entries added on a later day than the Summary
+  // last changed may have left it stale.
+  if (isGitRepo(vault.dir)) {
+    for (const note of active) {
+      if (note.type === "daily") continue;
+      const finding = staleSummary(vault.dir, note);
+      if (finding) findings.push(finding);
     }
   }
 
@@ -260,15 +254,130 @@ function isAttachmentTarget(target: string): boolean {
   return extension !== undefined && extension !== "md";
 }
 
-/** Distinct informative words of a note body, for cheap duplicate detection. */
-function bodyTokens(body: string): Set<string> {
-  const words = body.toLowerCase().match(/[a-z][a-z0-9-]{3,}/g) ?? [];
-  return new Set(words);
+/** Words per shingle: long enough that notes sharing a template or a topic's vocabulary don't match. */
+const SHINGLE_WORDS = 5;
+const DUPLICATE_SIMILARITY = 0.5;
+/** A shingle in more notes than this is boilerplate (a shared footer), not evidence of a copy. */
+const COMMON_SHINGLE_NOTES = 50;
+
+/**
+ * Pairs of notes whose runs of consecutive words mostly coincide (Jaccard
+ * similarity of their word shingles). Comparing word runs instead of word sets
+ * keeps notes built from one template, or about one topic, apart while copied
+ * passages still match. Candidate pairs come from an inverted index, then
+ * each is scored on its full shingle sets. A shingle in more than
+ * COMMON_SHINGLE_NOTES notes nominates no pairs, since it would pair every
+ * note with every other at quadratic cost; two notes made almost entirely of
+ * such boilerplate are therefore not compared.
+ */
+function possibleDuplicates(active: Note[]): DoctorFinding[] {
+  const docs = active
+    .filter((n) => n.type !== "daily" && n.body.length > 200)
+    .map((n) => ({ path: n.path, shingles: bodyShingles(n.body) }))
+    .filter((d) => d.shingles.size > 0);
+  const postings = new Map<string, number[]>();
+  docs.forEach((doc, i) => {
+    for (const s of doc.shingles) {
+      const list = postings.get(s);
+      if (list) list.push(i);
+      else postings.set(s, [i]);
+    }
+  });
+  const candidates = new Set<number>();
+  for (const list of postings.values()) {
+    if (list.length > COMMON_SHINGLE_NOTES) continue;
+    for (let a = 0; a < list.length; a++) {
+      for (let b = a + 1; b < list.length; b++) candidates.add(list[a]! * docs.length + list[b]!);
+    }
+  }
+  const findings: Array<DoctorFinding & { key: number }> = [];
+  for (const key of candidates) {
+    const a = docs[Math.floor(key / docs.length)]!;
+    const b = docs[key % docs.length]!;
+    const [small, large] =
+      a.shingles.size <= b.shingles.size ? [a.shingles, b.shingles] : [b.shingles, a.shingles];
+    // Jaccard can't reach the threshold when one set is under that share of the other.
+    if (small.size < large.size * DUPLICATE_SIMILARITY) continue;
+    let inter = 0;
+    for (const s of small) if (large.has(s)) inter++;
+    const sim = inter / (a.shingles.size + b.shingles.size - inter);
+    if (sim >= DUPLICATE_SIMILARITY) {
+      findings.push({
+        key,
+        severity: "info",
+        rule: "possible-duplicate",
+        message: `${Math.round(sim * 100)}% of the text overlaps with ${b.path}; merge them or make them distinct`,
+        path: a.path,
+      });
+    }
+  }
+  return findings.sort((x, y) => x.key - y.key).map(({ key: _key, ...finding }) => finding);
 }
 
-function jaccard(a: Set<string>, b: Set<string>): number {
-  if (a.size === 0 || b.size === 0) return 0;
-  let inter = 0;
-  for (const w of a) if (b.has(w)) inter++;
-  return inter / (a.size + b.size - inter);
+/** Distinct runs of SHINGLE_WORDS consecutive words in a note body. */
+function bodyShingles(body: string): Set<string> {
+  const words = body.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+  const shingles = new Set<string>();
+  for (let i = 0; i + SHINGLE_WORDS <= words.length; i++) {
+    shingles.add(words.slice(i, i + SHINGLE_WORDS).join(" "));
+  }
+  return shingles;
+}
+
+/** A list item: a bullet or a numbered item, indented at most three spaces. */
+const LIST_ITEM_MARKER = /^ {0,3}(?:[-*+]|\d{1,9}[.)])\s+/;
+const LIST_ITEM = new RegExp(`${LIST_ITEM_MARKER.source}\\S`);
+
+/**
+ * A finding when Log entries were added on a later day than the note's Summary
+ * (or Overview, or Goal) last changed, dated line by line with `git blame`.
+ * It compares the days lines were committed, not the dates written in Log
+ * lines, which are whatever the writer typed. A fix that only deletes Summary
+ * lines leaves no trace in blame, so the finding stays until a line changes.
+ */
+function staleSummary(vaultDir: string, note: Note): DoctorFinding | undefined {
+  const summary = summaryHeading(note);
+  const log = note.headings.find((h) => h.text.trim().toLowerCase() === "log");
+  if (!summary || !log) return undefined;
+  const lines = note.body.split("\n");
+  // Every Summary line counts, as session context shows them all; Log entries
+  // are list items outside code fences.
+  const fenced = fencedLines(lines);
+  const summaryLines = sectionRange(note, summary, lines.length).filter((i) => lines[i]!.trim());
+  const entries = sectionRange(note, log, lines.length).filter(
+    (i) => !fenced[i] && LIST_ITEM.test(lines[i]!),
+  );
+  if (summaryLines.length === 0 || entries.length === 0) return undefined;
+  const times = lineChangeTimes(vaultDir, note.path);
+  if (!times) return undefined;
+  const at = (i: number): number | undefined => times[note.bodyLine + i];
+  const summaryTimes = summaryLines.map(at);
+  if (summaryTimes.some((t) => t === undefined)) return undefined;
+  const changed = todayISO(new Date(Math.max(...(summaryTimes as number[]))));
+  const newer = entries.filter((i) => {
+    const t = at(i);
+    return t !== undefined && todayISO(new Date(t)) > changed;
+  });
+  if (newer.length === 0) return undefined;
+  // The most recently added entry; among entries added together, the last in the note.
+  const latestLine = newer.reduce((a, b) => ((at(b) ?? 0) >= (at(a) ?? 0) ? b : a));
+  const latest = lines[latestLine]!.replace(LIST_ITEM_MARKER, "").trim();
+  const quoted = latest.length > 100 ? `${latest.slice(0, 99)}…` : latest;
+  const count = newer.length === 1 ? "1 Log entry was" : `${newer.length} Log entries were`;
+  return {
+    severity: "info",
+    rule: "stale-summary",
+    message: `${summary.text.trim()} last changed ${changed}, and ${count} added after it (latest: "${quoted}"). Session context shows the ${summary.text.trim()}: update it, or refresh its as-of date if it still holds`,
+    path: note.path,
+  };
+}
+
+/** Body line indexes inside a heading's section, up to the next heading of the same or higher level. */
+function sectionRange(note: Note, heading: Heading, lineCount: number): number[] {
+  const next = note.headings.find((h) => h.line > heading.line && h.depth <= heading.depth);
+  const end = next?.line ?? lineCount;
+  return Array.from(
+    { length: Math.max(0, end - heading.line - 1) },
+    (_, k) => heading.line + 1 + k,
+  );
 }

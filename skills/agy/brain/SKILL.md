@@ -26,7 +26,8 @@ Treat it as a project or topic: `big-brain show <arg>` (falling back to `big-bra
 
 From here on, keep the vault current as a side effect of the work:
 
-- Decisions, progress, and problems → `big-brain daily --log "..."` and a Log line on the affected project.
+- Decisions, progress, and problems → `big-brain daily --log "..."` and a Log line on the affected project. When that line changes what the project's Summary (or Goal) says, such as its state, version, or what's open or done, update the Summary too: the next session sees the Summary, not the Log.
+- Fixing existing text → `big-brain edit <note> --old "<exact passage>" --new "<replacement>"` (`edit_note`), never retyping the whole note.
 - New commitments → project notes; new action items → `big-brain task add`.
 - Completed work → `big-brain task done <id>`.
 - Facts worth keeping with no obvious home → `big-brain capture "..."`.

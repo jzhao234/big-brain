@@ -17,7 +17,7 @@ import os from "node:os";
 import path from "node:path";
 import { projectStatus, summarizeProject } from "./projects.js";
 import { compareTasks } from "./tasks.js";
-import type { ContextPathRule, Note, TaskItem } from "./types.js";
+import type { ContextPathRule, Heading, Note, TaskItem } from "./types.js";
 import { asStringArray } from "./util.js";
 import type { Vault } from "./vault.js";
 
@@ -223,15 +223,20 @@ function statusOf(note: Note): string {
   return status === undefined || status === null ? "none" : String(status);
 }
 
+/** The heading of the note's `Summary` (or `Overview`, or `Goal`) section. */
+export function summaryHeading(note: Note): Heading | undefined {
+  return ["summary", "overview", "goal"]
+    .map((name) => note.headings.find((h) => h.text.trim().toLowerCase() === name))
+    .find((h) => h !== undefined);
+}
+
 /**
  * The note's `Summary` (or `Overview`, or `Goal`) section; without one, the
  * text before its first section; without that, its excerpt.
  */
 export function summaryOf(note: Note): string {
   const lines = note.body.split("\n");
-  const heading = ["summary", "overview", "goal"]
-    .map((name) => note.headings.find((h) => h.text.trim().toLowerCase() === name))
-    .find((h) => h !== undefined);
+  const heading = summaryHeading(note);
   let section: string[];
   if (heading) {
     const next = note.headings.find((h) => h.line > heading.line && h.depth <= heading.depth);

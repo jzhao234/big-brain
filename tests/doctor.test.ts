@@ -1,8 +1,10 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runDoctor } from "../src/core/doctor.js";
+import { createProject } from "../src/core/projects.js";
 import { initVault } from "../src/core/scaffold.js";
 import { Vault } from "../src/core/vault.js";
 
@@ -125,5 +127,191 @@ describe("link and heading ambiguity", () => {
     });
 
     expect(runDoctor(vault).filter((f) => f.rule === "duplicate-heading")).toEqual([]);
+  });
+});
+
+describe("possible duplicates", () => {
+  const sentences = (topic: string, n: number) =>
+    Array.from(
+      { length: n },
+      (_, i) =>
+        `The ${topic} team shipped change number ${i} after reviewing ${topic} metrics ${i * 7}.`,
+    ).join(" ");
+
+  it("keeps notes built from one template apart", () => {
+    const template = (name: string, facts: string) =>
+      `## Summary\n\n${name} is a client of the standard stack: fleet, auth, lens, explorer and pages.\n\n` +
+      `## Identifiers\n\n${facts}\n\n## Log\n\n- 2026-01-02: deployed boxes, domains, email and invites.\n`;
+    vault.createNote({ title: "Alpha", body: template("Alpha", sentences("alpha", 6)) });
+    vault.createNote({ title: "Beta", body: template("Beta", sentences("beta", 6)) });
+
+    expect(runDoctor(vault).filter((f) => f.rule === "possible-duplicate")).toEqual([]);
+  });
+
+  it("flags a copied note with small edits", () => {
+    const body = sentences("platform", 12);
+    vault.createNote({ title: "Original", body });
+    vault.createNote({ title: "Copy", body: `${body} One extra closing sentence here.` });
+
+    const dup = runDoctor(vault).filter((f) => f.rule === "possible-duplicate");
+
+    expect(dup).toHaveLength(1);
+    expect(dup[0]?.message).toMatch(
+      /^\d+% of the text overlaps with notes\/(Copy|Original)\.md; merge them/,
+    );
+  });
+
+  it("ignores a footer shared by many notes", () => {
+    const footer = "Maintained by the platform team; ask in the shared channel before editing.";
+    for (let i = 0; i < 60; i++) {
+      vault.createNote({ title: `Note ${i}`, body: `${sentences(`topic${i}`, 3)}\n\n${footer}` });
+    }
+
+    expect(runDoctor(vault).filter((f) => f.rule === "possible-duplicate")).toEqual([]);
+  });
+
+  it("scores a nominated pair on all its text, boilerplate included", () => {
+    const footer = sentences("footer", 4);
+    for (let i = 0; i < 55; i++) {
+      vault.createNote({
+        title: `Filler ${i}`,
+        body: `${sentences(`filler${i}`, 2)}\n\n${footer}`,
+      });
+    }
+    const body = `${sentences("twin", 3)}\n\n${footer}`;
+    vault.createNote({ title: "Twin A", body });
+    vault.createNote({ title: "Twin B", body });
+
+    const dup = runDoctor(vault).filter((f) => f.rule === "possible-duplicate");
+
+    expect(dup.map((f) => f.message)).toEqual([
+      "100% of the text overlaps with notes/Twin B.md; merge them or make them distinct",
+    ]);
+  });
+
+  it("still checks vaults with more than 200 notes", () => {
+    for (let i = 0; i < 205; i++) {
+      vault.createNote({ title: `Filler ${i}`, body: sentences(`filler${i}`, 3) });
+    }
+    const body = sentences("copied", 12);
+    vault.createNote({ title: "First", body });
+    vault.createNote({ title: "Second", body });
+
+    const dup = runDoctor(vault).filter((f) => f.rule === "possible-duplicate");
+
+    expect(dup.map((f) => f.path).sort()).toEqual(["notes/First.md"]);
+  });
+});
+
+describe("stale-summary", () => {
+  function gitIn(args: string[], date?: string): void {
+    const env = date
+      ? { ...process.env, GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date }
+      : process.env;
+    execFileSync("git", args, { cwd: dir, env, stdio: "ignore" });
+  }
+  function commit(date: string): void {
+    gitIn(["add", "-A"]);
+    gitIn(["-c", "user.name=Test", "-c", "user.email=t@example.com", "commit", "-qm", "x"], date);
+  }
+  const stale = () => runDoctor(vault).filter((f) => f.rule === "stale-summary");
+
+  beforeEach(() => {
+    gitIn(["init", "-q"]);
+    vault.createNote({
+      title: "Proj",
+      body: "## Summary\n\nState: building.\n\n## Log\n\n- 2026-01-05: started\n",
+    });
+    commit("2026-01-05T12:00:00");
+    vault.refresh();
+  });
+
+  it("flags Log entries added on a later day than the Summary changed", () => {
+    vault.appendToNote("Proj", "- 2026-01-07: shipped v1", "Log");
+    commit("2026-01-07T12:00:00");
+    vault.refresh();
+
+    expect(stale()).toEqual([
+      {
+        severity: "info",
+        rule: "stale-summary",
+        path: "notes/Proj.md",
+        message:
+          'Summary last changed 2026-01-05, and 1 Log entry was added after it (latest: "2026-01-07: shipped v1"). Session context shows the Summary: update it, or refresh its as-of date if it still holds',
+      },
+    ]);
+  });
+
+  it("clears once the Summary changes", () => {
+    vault.appendToNote("Proj", "- 2026-01-07: shipped v1", "Log");
+    commit("2026-01-07T12:00:00");
+    vault.editNote("Proj", "State: building.", "State: v1 shipped.");
+    commit("2026-01-08T12:00:00");
+    vault.refresh();
+
+    expect(stale()).toEqual([]);
+  });
+
+  it("ignores a Log entry added the same day as the Summary changed", () => {
+    vault.appendToNote("Proj", "- 2026-01-05: wired CI", "Log");
+    commit("2026-01-05T18:00:00");
+    vault.refresh();
+
+    expect(stale()).toEqual([]);
+  });
+
+  it("counts an uncommitted Log entry as added today", () => {
+    vault.appendToNote("Proj", "- one", "Log");
+    vault.appendToNote("Proj", "- two", "Log");
+    vault.refresh();
+
+    expect(stale()[0]?.message).toContain('2 Log entries were added after it (latest: "two")');
+  });
+
+  it("checks the Goal section of a default project note", () => {
+    createProject(vault, { title: "Plain", goal: "Ship the thing." });
+    commit("2026-01-05T12:00:00");
+    vault.appendToNote("Plain", "- shipped", "Log");
+    vault.refresh();
+
+    expect(stale().map((f) => f.message.slice(0, 31))).toEqual(["Goal last changed 2026-01-05, a"]);
+  });
+
+  it("leaves fenced examples out and reads numbered or spaced items", () => {
+    vault.appendToNote("Proj", "```\n- example entry\n```", "Log");
+    commit("2026-01-06T12:00:00");
+    vault.refresh();
+    expect(stale()).toEqual([]);
+
+    vault.appendToNote("Proj", "1.  numbered entry", "Log");
+    commit("2026-01-08T12:00:00");
+    vault.appendToNote("Proj", "-   spaced entry", "Log");
+    commit("2026-01-07T12:00:00");
+    vault.refresh();
+    expect(stale()[0]?.message).toContain(
+      '2 Log entries were added after it (latest: "numbered entry")',
+    );
+  });
+
+  it("counts a change to fenced text in the Summary", () => {
+    vault.editNote("Proj", "State: building.", "State: building.\n\n```\nport: 8080\n```");
+    commit("2026-01-05T13:00:00");
+    vault.appendToNote("Proj", "- moved port", "Log");
+    commit("2026-01-06T12:00:00");
+    vault.editNote("Proj", "port: 8080", "port: 9090");
+    commit("2026-01-07T12:00:00");
+    vault.refresh();
+
+    expect(stale()).toEqual([]);
+  });
+
+  it("skips untracked notes and vaults outside git", () => {
+    vault.createNote({ title: "New", body: "## Summary\n\nFresh.\n\n## Log\n\n- added\n" });
+    vault.appendToNote("Proj", "- later", "Log");
+    vault.refresh();
+    expect(stale().map((f) => f.path)).toEqual(["notes/Proj.md"]);
+
+    fs.rmSync(path.join(dir, ".git"), { recursive: true, force: true });
+    expect(stale()).toEqual([]);
   });
 });
