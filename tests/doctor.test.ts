@@ -170,6 +170,25 @@ describe("possible duplicates", () => {
     expect(runDoctor(vault).filter((f) => f.rule === "possible-duplicate")).toEqual([]);
   });
 
+  it("scores a nominated pair on all its text, boilerplate included", () => {
+    const footer = sentences("footer", 4);
+    for (let i = 0; i < 55; i++) {
+      vault.createNote({
+        title: `Filler ${i}`,
+        body: `${sentences(`filler${i}`, 2)}\n\n${footer}`,
+      });
+    }
+    const body = `${sentences("twin", 3)}\n\n${footer}`;
+    vault.createNote({ title: "Twin A", body });
+    vault.createNote({ title: "Twin B", body });
+
+    const dup = runDoctor(vault).filter((f) => f.rule === "possible-duplicate");
+
+    expect(dup.map((f) => f.message)).toEqual([
+      "100% of the text overlaps with notes/Twin B.md; merge them or make them distinct",
+    ]);
+  });
+
   it("still checks vaults with more than 200 notes", () => {
     for (let i = 0; i < 205; i++) {
       vault.createNote({ title: `Filler ${i}`, body: sentences(`filler${i}`, 3) });
@@ -272,6 +291,18 @@ describe("stale-summary", () => {
     expect(stale()[0]?.message).toContain(
       '2 Log entries were added after it (latest: "numbered entry")',
     );
+  });
+
+  it("counts a change to fenced text in the Summary", () => {
+    vault.editNote("Proj", "State: building.", "State: building.\n\n```\nport: 8080\n```");
+    commit("2026-01-05T13:00:00");
+    vault.appendToNote("Proj", "- moved port", "Log");
+    commit("2026-01-06T12:00:00");
+    vault.editNote("Proj", "port: 8080", "port: 9090");
+    commit("2026-01-07T12:00:00");
+    vault.refresh();
+
+    expect(stale()).toEqual([]);
   });
 
   it("skips untracked notes and vaults outside git", () => {

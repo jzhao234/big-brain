@@ -264,11 +264,11 @@ const COMMON_SHINGLE_NOTES = 50;
  * Pairs of notes whose runs of consecutive words mostly coincide (Jaccard
  * similarity of their word shingles). Comparing word runs instead of word sets
  * keeps notes built from one template, or about one topic, apart while copied
- * passages still match. Pairs are found through an inverted index, so only
- * notes sharing at least one shingle are compared. Shingles in more than
- * COMMON_SHINGLE_NOTES notes are left out of the shared counts: they would
- * pair every note with every other at quadratic cost, and only lower a
- * pair's similarity by leaving them out.
+ * passages still match. Candidate pairs come from an inverted index, then
+ * each is scored on its full shingle sets. A shingle in more than
+ * COMMON_SHINGLE_NOTES notes nominates no pairs, since it would pair every
+ * note with every other at quadratic cost; two notes made almost entirely of
+ * such boilerplate are therefore not compared.
  */
 function possibleDuplicates(active: Note[]): DoctorFinding[] {
   const docs = active
@@ -283,20 +283,23 @@ function possibleDuplicates(active: Note[]): DoctorFinding[] {
       else postings.set(s, [i]);
     }
   });
-  const shared = new Map<number, number>();
+  const candidates = new Set<number>();
   for (const list of postings.values()) {
     if (list.length > COMMON_SHINGLE_NOTES) continue;
     for (let a = 0; a < list.length; a++) {
-      for (let b = a + 1; b < list.length; b++) {
-        const key = list[a]! * docs.length + list[b]!;
-        shared.set(key, (shared.get(key) ?? 0) + 1);
-      }
+      for (let b = a + 1; b < list.length; b++) candidates.add(list[a]! * docs.length + list[b]!);
     }
   }
   const findings: Array<DoctorFinding & { key: number }> = [];
-  for (const [key, inter] of shared) {
+  for (const key of candidates) {
     const a = docs[Math.floor(key / docs.length)]!;
     const b = docs[key % docs.length]!;
+    const [small, large] =
+      a.shingles.size <= b.shingles.size ? [a.shingles, b.shingles] : [b.shingles, a.shingles];
+    // Jaccard can't reach the threshold when one set is under that share of the other.
+    if (small.size < large.size * DUPLICATE_SIMILARITY) continue;
+    let inter = 0;
+    for (const s of small) if (large.has(s)) inter++;
     const sim = inter / (a.shingles.size + b.shingles.size - inter);
     if (sim >= DUPLICATE_SIMILARITY) {
       findings.push({
@@ -337,13 +340,12 @@ function staleSummary(vaultDir: string, note: Note): DoctorFinding | undefined {
   const log = note.headings.find((h) => h.text.trim().toLowerCase() === "log");
   if (!summary || !log) return undefined;
   const lines = note.body.split("\n");
+  // Every Summary line counts, as session context shows them all; Log entries
+  // are list items outside code fences.
   const fenced = fencedLines(lines);
-  const prose = (i: number) => !fenced[i];
-  const summaryLines = sectionRange(note, summary, lines.length).filter(
-    (i) => prose(i) && lines[i]!.trim(),
-  );
+  const summaryLines = sectionRange(note, summary, lines.length).filter((i) => lines[i]!.trim());
   const entries = sectionRange(note, log, lines.length).filter(
-    (i) => prose(i) && LIST_ITEM.test(lines[i]!),
+    (i) => !fenced[i] && LIST_ITEM.test(lines[i]!),
   );
   if (summaryLines.length === 0 || entries.length === 0) return undefined;
   const times = lineChangeTimes(vaultDir, note.path);
