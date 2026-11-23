@@ -442,9 +442,12 @@ export function treeHash(dir: string): string {
         visit(path.join(abs, name), rel ? `${rel}/${name}` : name);
       }
     } else if (st.isSymbolicLink()) {
-      hash.update(`l\0${rel}\0${fs.readlinkSync(abs)}\0`);
+      const target = Buffer.from(fs.readlinkSync(abs));
+      hash.update(`l\0${rel}\0${target.length}\0`).update(target);
     } else {
-      hash.update(`f\0${rel}\0`).update(fs.readFileSync(abs)).update("\0");
+      // Byte length first, so no file's content can pass for the next entry.
+      const bytes = fs.readFileSync(abs);
+      hash.update(`f\0${rel}\0${bytes.length}\0`).update(bytes);
     }
   };
   visit(dir, "");
@@ -1028,7 +1031,7 @@ class Backup {
   take(rel: string, mode: "move" | "copy", from = path.join(this.home, rel)): string {
     const to = path.join(this.dir, "files", rel);
     fs.mkdirSync(path.dirname(to), { recursive: true });
-    if (mode === "move") fs.renameSync(from, to);
+    if (mode === "move") moveAcross(from, to);
     else fs.cpSync(from, to, { recursive: true, preserveTimestamps: true, dereference: true });
     this.taken.push({ from, backup: to, mode });
     this.writeManifest();
@@ -1044,7 +1047,7 @@ class Backup {
         if (fs.lstatSync(original, { throwIfNoEntry: false })?.isSymbolicLink()) {
           fs.unlinkSync(original);
         }
-        if (!fs.existsSync(original)) fs.renameSync(t.backup, original);
+        if (!fs.existsSync(original)) moveAcross(t.backup, original);
         else complete = false;
       } catch {
         complete = false; // left in the backup; the manifest says where it belongs
@@ -1061,6 +1064,20 @@ class Backup {
   }
   get used(): boolean {
     return this.taken.length > 0;
+  }
+}
+
+/**
+ * Rename, or copy then delete when the two paths are on different filesystems
+ * (an agent home on another mount than the backups under XDG_STATE_HOME).
+ */
+function moveAcross(from: string, to: string): void {
+  try {
+    fs.renameSync(from, to);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
+    fs.cpSync(from, to, { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
+    fs.rmSync(from, { recursive: true, force: true });
   }
 }
 
@@ -1196,6 +1213,11 @@ export function installAgent(p: AgentPaths, opts: InstallOptions = {}): InstallR
     for (const lp of plan.links) {
       const dst = path.join(p.home, lp.entry.rel);
       if (lp.action === "none" || lp.action === "keep" || lp.action === "conflict") continue;
+      // An update replaces the copy without --replace, so it must still be the
+      // unedited copy planned above, not one another process just edited.
+      if (lp.action === "update" && !sameHash(dst, plan.state.bundled[lp.entry.rel] ?? "")) {
+        throw new Error(`${lp.entry.rel} changed during install; run it again`);
+      }
       if (lp.action === "replace" || lp.action === "update") backup.take(lp.entry.rel, "move");
       fs.mkdirSync(path.dirname(dst), { recursive: true });
       if (lp.entry.kind === "bundled-skill") {
@@ -1256,15 +1278,19 @@ export function installAgent(p: AgentPaths, opts: InstallOptions = {}): InstallR
       .filter((l) => l.entry.kind !== "bundled-skill" && l.action !== "conflict")
       .map((l) => l.entry.rel);
     const keptStale = opts.prune ? [] : plan.stale;
-    // Record what each bundled copy now holds when big-brain wrote it or it
-    // matches the package; a copy kept as it was keeps its old record.
-    const bundled: Record<string, string> = {};
+    // Record what each bundled copy holds when big-brain wrote it or it matches
+    // the package. A copy left as it was keeps its record, even while a vault
+    // skill of the same name waits on --replace; a vault link drops it.
+    const bundled: Record<string, string> = { ...plan.state.bundled };
     for (const l of plan.links) {
-      if (l.entry.kind !== "bundled-skill") continue;
-      const recorded = plan.state.bundled[l.entry.rel];
-      if (["copy", "update", "replace"].includes(l.action) || l.state === "copied") {
-        bundled[l.entry.rel] = treeHash(l.entry.src);
-      } else if (recorded !== undefined) bundled[l.entry.rel] = recorded;
+      const rel = l.entry.rel;
+      if (l.entry.kind === "bundled-skill") {
+        if (["copy", "update", "replace"].includes(l.action) || l.state === "copied") {
+          bundled[rel] = treeHash(l.entry.src);
+        }
+      } else if (l.action === "link" || l.action === "replace" || l.action === "none") {
+        delete bundled[rel];
+      }
     }
     writeState(p, {
       ...plan.state,

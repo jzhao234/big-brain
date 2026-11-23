@@ -55,6 +55,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -201,6 +202,57 @@ describe("installAgent: links", () => {
       fs.readFileSync(path.join(report.backupDir!, "files/skills/brain/SKILL.md"), "utf8"),
     ).toBe("older bundled text");
     expect(brainPlan()).toMatchObject({ state: "copied", action: "keep" });
+  });
+
+  it("hashes folder layouts apart even when their bytes line up", () => {
+    const a = path.join(root, "a");
+    const b = path.join(root, "b");
+    write(path.join(a, "a"), "x");
+    write(path.join(a, "b"), "y");
+    write(path.join(b, "a"), "x\0f\0b\0y");
+    expect(treeHash(a)).not.toBe(treeHash(b));
+  });
+
+  it("keeps the record of a bundled copy while a vault skill waits on --replace", () => {
+    installAgent(paths("codex"));
+    const recorded = readState(paths("codex")).bundled["skills/brain"];
+    profile("codex", "skills/brain/SKILL.md", "---\nname: brain\n---\nmine");
+
+    const blocked = installAgent(paths("codex"));
+    expect(blocked.links.find((l) => l.entry.rel === "skills/brain")?.action).toBe("conflict");
+    expect(readState(paths("codex")).bundled["skills/brain"]).toBe(recorded);
+
+    installAgent(paths("codex"), { replace: true });
+    expect(fs.lstatSync(path.join(home("codex"), "skills/brain")).isSymbolicLink()).toBe(true);
+    expect(readState(paths("codex")).bundled["skills/brain"]).toBeUndefined();
+  });
+
+  it("updates a bundled copy when backups are on another filesystem", () => {
+    installAgent(paths("codex"));
+    const copy = path.join(home("codex"), "skills/brain");
+    fs.writeFileSync(path.join(copy, "SKILL.md"), "older bundled text");
+    const state = readState(paths("codex"));
+    state.bundled["skills/brain"] = treeHash(copy);
+    fs.writeFileSync(paths("codex").stateFile, JSON.stringify(state));
+    const rename = fs.renameSync;
+    const spy = vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
+      // Only the move of the copy itself crosses devices; files written inside the backup don't.
+      if (
+        String(from).startsWith(userHome) &&
+        String(to).includes(`${path.sep}backups${path.sep}`)
+      ) {
+        throw Object.assign(new Error("cross-device link"), { code: "EXDEV" });
+      }
+      rename(from, to);
+    });
+
+    const report = installAgent(paths("codex"));
+    spy.mockRestore();
+
+    expect(
+      fs.readFileSync(path.join(report.backupDir!, "files/skills/brain/SKILL.md"), "utf8"),
+    ).toBe("older bundled text");
+    expect(fs.readFileSync(path.join(copy, "SKILL.md"), "utf8")).not.toBe("older bundled text");
   });
 
   it("keeps an edited bundled copy, and --replace backs it up and copies big-brain's", () => {
