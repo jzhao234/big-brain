@@ -196,7 +196,7 @@ Three skills wrap the tools into commands, for Claude Code and Antigravity (`/br
 - **`capture`:** zero-friction capture to the inbox
 - **`weekly`:** a guided weekly review
 
-`big-brain agents install claude codex agy` installs them for each agent (see below). `big-brain install-skills` still copies the Claude versions into `~/.claude/skills` (`--force` overwrites). They're path-agnostic: they call the `big-brain` CLI / MCP tools and resolve the vault from `BIG_BRAIN_VAULT` (or `--vault`), so the same skill works on every machine.
+`big-brain agents install claude codex agy` installs them for each agent (see below). They are copied, not linked, since the package path changes between versions, and kept current: a copy you haven't edited is updated when big-brain ships a newer one, and an edited copy is kept and reported (`--replace` backs it up and copies big-brain's). A skill of the same name in `agents/<agent>/skills/` replaces the bundled one, and then follows the vault instead of big-brain. `big-brain install-skills` still copies the Claude versions into `~/.claude/skills` (`--force` overwrites). They're path-agnostic: they call the `big-brain` CLI / MCP tools and resolve the vault from `BIG_BRAIN_VAULT` (or `--vault`), so the same skill works on every machine.
 
 ## Agent profiles: your agent setup in the vault
 

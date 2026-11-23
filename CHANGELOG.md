@@ -12,6 +12,7 @@ All notable changes to big-brain. The format follows [Keep a Changelog](https://
 ### Changed
 
 - `doctor`'s `possible-duplicate` compares runs of five consecutive words instead of the sets of words two notes use, so notes built from one template or about one topic are no longer reported, while copied passages still are. It also runs on vaults of any size: before, it silently skipped vaults with more than 200 notes.
+- `big-brain agents install` keeps big-brain's bundled skills current. It records what it copied, so a copy you haven't edited is updated (and backed up) when big-brain ships a newer version, while an edited copy is still kept and reported; `--replace` now also backs up an edited copy and copies big-brain's. Before, an existing copy was never updated, so `/brain`, `/capture` and `/weekly` stayed at whatever version was first installed.
 - The bundled `/brain` and `/weekly` skills (Claude Code, Codex and agy) fix existing text with `edit_note` and keep the Summary current when a Log line changes what it says. `/weekly` refreshes stale Summaries, and for a bloated note it proposes moving old Log entries to an archive note, splitting out only a section that covers a separate topic; the `bloated-note` message says the same.
 
 ## 0.4.0 (2026-11-20)

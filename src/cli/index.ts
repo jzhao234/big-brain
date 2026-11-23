@@ -815,6 +815,7 @@ const LINK_MARKS: Record<string, string> = {
   keep: pc.dim("="),
   link: pc.green("+"),
   copy: pc.green("+"),
+  update: pc.green("~"),
   replace: pc.yellow("~"),
   conflict: pc.red("!"),
 };
@@ -855,10 +856,12 @@ function printAgentReport(report: InstallReport, verbose: boolean): number {
         : l.action === "conflict"
           ? `${l.entry.rel}: ${l.state === "other-link" ? "a link to somewhere else" : "an unmanaged file"} is in the way (--replace backs it up and links the vault's)`
           : l.action === "replace"
-            ? `${l.entry.rel}: back up what's there, then link`
-            : l.entry.kind === "bundled-skill" && l.state === "copy-differs"
-              ? `${l.entry.rel}: kept (differs from big-brain's bundled copy)`
-              : `${l.entry.rel}${l.entry.kind === "bundled-skill" ? pc.dim(" (bundled)") : ""}`;
+            ? `${l.entry.rel}: back up what's there, then ${l.entry.kind === "bundled-skill" ? "copy big-brain's version" : "link"}`
+            : l.action === "update"
+              ? `${l.entry.rel}: unedited copy of an older big-brain version; update it to this one`
+              : l.entry.kind === "bundled-skill" && l.state === "copy-differs"
+                ? `${l.entry.rel}: kept (edited here, or copied before big-brain recorded its copies; --replace backs it up and copies big-brain's version)`
+                : `${l.entry.rel}${l.entry.kind === "bundled-skill" ? pc.dim(" (bundled)") : ""}`;
     console.log(`  ${LINK_MARKS[l.action] ?? " "} ${what}`);
   }
   for (const s of report.settings) {
@@ -941,7 +944,10 @@ agents
   .command("install [agents...]")
   .description("link each agent's setup from the vault (default: agents with a profile)")
   .option("-n, --dry-run", "show the plan, change nothing")
-  .option("--replace", "back up and replace unmanaged files and locally edited settings")
+  .option(
+    "--replace",
+    "back up and replace unmanaged files, locally edited settings, and edited copies of big-brain's skills",
+  )
   .option("--prune", "remove links whose vault file was deleted")
   .option("-v, --verbose", "also list everything that is already in place")
   .action(
